@@ -274,6 +274,18 @@ test "read int32 null pages benchmark" (b : @bench.T) {
 }
 
 ///|
+test "read delta byte array benchmark" (b : @bench.T) {
+  let data = read_bench_fixture("delta_byte_array.parquet")
+  b.bench(() => ignore(try! read_bytes(data)))
+}
+
+///|
+test "read delta byte array columnar benchmark" (b : @bench.T) {
+  let data = read_bench_fixture("delta_byte_array.parquet")
+  b.bench(() => ignore(try! read_bytes_columnar(data)))
+}
+
+///|
 test "read int32 null pages columnar benchmark" (b : @bench.T) {
   let data = read_bench_fixture("int32_with_null_pages.parquet")
   b.bench(() => ignore(try! read_bytes_columnar(data)))

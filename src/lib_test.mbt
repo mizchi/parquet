@@ -410,6 +410,14 @@ test "reads alltypes dictionary fixture" {
 }
 
 ///|
+test "reads delta byte array fixture columnar" {
+  let data = read_fixture("delta_byte_array.parquet")
+  let rows_file = try! @parquet.read_bytes(data)
+  let columnar = try! @parquet.read_bytes_columnar(data)
+  try! assert_columnar_matches_rows(columnar, rows_file)
+}
+
+///|
 test "reads alltypes plain fixture columnar" {
   let data = read_fixture("alltypes_plain.parquet")
   let rows_file = try! @parquet.read_bytes(data)

@@ -74,7 +74,11 @@ fn string_to_bytes(value : String) -> Bytes {
 }
 
 ///|
-fn bytes_concat_prefix(prev : Bytes, prefix_len : Int, suffix : Bytes) -> Bytes {
+fn bytes_concat_prefix(
+  prev : Bytes,
+  prefix_len : Int,
+  suffix : BytesView,
+) -> Bytes {
   Bytes::makei(prefix_len + suffix.length(), fn(i) {
     if i < prefix_len {
       prev[i]

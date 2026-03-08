@@ -738,57 +738,88 @@ fn decode_delta_binary_packed_int64_values_into(
 }
 
 ///|
-fn decode_delta_length_byte_array(
+fn decode_delta_length_byte_array_layout(
   data : Bytes,
   start : Int,
   count : Int,
-) -> (Array[Bytes], Int) raise ParquetError {
+) -> (Array[Int64], Int, Int) raise ParquetError {
   let (lengths, lengths_len) = decode_delta_binary_packed(data, start)
   if lengths.length() != count {
     invalid_data("DELTA_LENGTH_BYTE_ARRAY count mismatch")
   }
-  let mut offset = start + lengths_len
-  let values : Array[Bytes] = Array::new(capacity=count)
+  let values_offset = start + lengths_len
+  let mut offset = values_offset
   for length in lengths {
     let size = length.to_int()
     if size < 0 || offset + size > data.length() {
       invalid_data("Invalid DELTA_LENGTH_BYTE_ARRAY suffix length")
     }
-    values.push(data.view(start=offset, end=offset + size).to_bytes())
     offset += size
   }
-  (values, offset - start)
+  (lengths, values_offset, offset - start)
 }
 
 ///|
-fn decode_delta_byte_array(
+fn decode_delta_byte_array_values(
   data : Bytes,
   start : Int,
   count : Int,
-) -> (Array[Bytes], Int) raise ParquetError {
+  column_type : ColumnType,
+) -> (Array[Value], Int) raise ParquetError {
+  let values : Array[Value] = Array::new(capacity=count)
+  let consumed = decode_delta_byte_array_values_into(
+    values, data, start, count, column_type,
+  )
+  (values, consumed)
+}
+
+///|
+fn decode_delta_byte_array_values_into(
+  target : Array[Value],
+  data : Bytes,
+  start : Int,
+  count : Int,
+  column_type : ColumnType,
+) -> Int raise ParquetError {
   let (prefix_lengths, prefix_len_bytes) = decode_delta_binary_packed(
     data, start,
   )
   if prefix_lengths.length() != count {
     invalid_data("DELTA_BYTE_ARRAY prefix count mismatch")
   }
-  let (suffixes, suffix_len_bytes) = decode_delta_length_byte_array(
+  let (suffix_lengths, suffix_data_start, suffix_len_bytes) = decode_delta_length_byte_array_layout(
     data,
     start + prefix_len_bytes,
     count,
   )
   let mut previous = Bytes::default()
-  let values : Array[Bytes] = Array::new(capacity=count)
+  let mut suffix_offset = suffix_data_start
   for index in 0..<count {
     let prefix_len = prefix_lengths[index].to_int()
     if prefix_len < 0 || prefix_len > previous.length() {
       invalid_data("Invalid DELTA_BYTE_ARRAY prefix length")
     }
-    let value = bytes_concat_prefix(previous, prefix_len, suffixes[index])
-    values.push(value)
+    let suffix_len = suffix_lengths[index].to_int()
+    if suffix_len < 0 || suffix_offset + suffix_len > data.length() {
+      invalid_data("Invalid DELTA_LENGTH_BYTE_ARRAY suffix length")
+    }
+    let value = bytes_concat_prefix(
+      previous,
+      prefix_len,
+      data.view(start=suffix_offset, end=suffix_offset + suffix_len),
+    )
+    match column_type {
+      String => target.push(Value::String(bytes_to_utf8_string(value[:])))
+      Binary => target.push(Value::Binary(value))
+      _ => {
+        unsupported("DELTA_BYTE_ARRAY is only valid for byte arrays")
+        return 0
+      }
+    }
     previous = value
+    suffix_offset += suffix_len
   }
-  (values, prefix_len_bytes + suffix_len_bytes)
+  prefix_len_bytes + suffix_len_bytes
 }
 
 ///|
@@ -1167,22 +1198,8 @@ fn decode_non_null_values(
     }
   } else if encoding == encoding_delta_byte_array {
     match column.column_type {
-      String => {
-        let (values, consumed) = decode_delta_byte_array(data, start, count)
-        let decoded : Array[Value] = Array::new(capacity=count)
-        for value in values {
-          decoded.push(Value::String(bytes_to_utf8_string(value[:])))
-        }
-        (decoded, consumed)
-      }
-      Binary => {
-        let (values, consumed) = decode_delta_byte_array(data, start, count)
-        let decoded : Array[Value] = Array::new(capacity=count)
-        for value in values {
-          decoded.push(Value::Binary(value))
-        }
-        (decoded, consumed)
-      }
+      String => decode_delta_byte_array_values(data, start, count, String)
+      Binary => decode_delta_byte_array_values(data, start, count, Binary)
       _ => {
         unsupported("DELTA_BYTE_ARRAY is only valid for byte arrays")
         ([], 0)
@@ -1235,20 +1252,10 @@ fn decode_non_null_values_into(
     }
   } else if encoding == encoding_delta_byte_array {
     match column.column_type {
-      String => {
-        let (values, consumed) = decode_delta_byte_array(data, start, count)
-        for value in values {
-          target.push(Value::String(bytes_to_utf8_string(value[:])))
-        }
-        consumed
-      }
-      Binary => {
-        let (values, consumed) = decode_delta_byte_array(data, start, count)
-        for value in values {
-          target.push(Value::Binary(value))
-        }
-        consumed
-      }
+      String =>
+        decode_delta_byte_array_values_into(target, data, start, count, String)
+      Binary =>
+        decode_delta_byte_array_values_into(target, data, start, count, Binary)
       _ => {
         unsupported("DELTA_BYTE_ARRAY is only valid for byte arrays")
         0
