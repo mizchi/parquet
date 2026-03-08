@@ -50,6 +50,28 @@ fn read_int96_micros(data : Bytes, start : Int) -> Int64 raise ParquetError {
 }
 
 ///|
+fn bit_mask_u64(bit_width : Int) -> UInt64 {
+  if bit_width >= 64 {
+    UInt64::default().lnot()
+  } else {
+    ((1).to_uint64() << bit_width) - (1).to_uint64()
+  }
+}
+
+///|
+fn read_partial_u64_le(data : Bytes, start : Int) -> UInt64 {
+  if start + 8 <= data.length() {
+    return data.unsafe_read_uint64_le(start)
+  }
+  let mut value = UInt64::default()
+  let remaining = data.length() - start
+  for index in 0..<remaining {
+    value = value | (data[start + index].to_uint64() << (index * 8))
+  }
+  value
+}
+
+///|
 fn unpack_lsb_bitpacked(
   data : Bytes,
   start : Int,
@@ -59,20 +81,50 @@ fn unpack_lsb_bitpacked(
   if bit_width == 0 {
     return Array::make(count, UInt64::default())
   }
-  let values : Array[UInt64] = []
-  for index in 0..<count {
-    let base_bit = index * bit_width
-    let mut value = UInt64::default()
-    for bit in 0..<bit_width {
-      let absolute_bit = base_bit + bit
-      let byte_index = start + absolute_bit / 8
-      let bit_index = absolute_bit % 8
-      let byte = data[byte_index].to_int()
-      if ((byte >> bit_index) & 1) == 1 {
-        value = value | ((1).to_uint64() << bit)
-      }
+  let values : Array[UInt64] = Array::new(capacity=count)
+  if bit_width == 64 {
+    let mut offset = start
+    for _ in 0..<count {
+      values.push(data.unsafe_read_uint64_le(offset))
+      offset += 8
     }
-    values.push(value)
+    return values
+  }
+  let mask = bit_mask_u64(bit_width)
+  if bit_width <= 56 {
+    let mut offset = start
+    let mut bit_buffer = UInt64::default()
+    let mut bits_in_buffer = 0
+    for _ in 0..<count {
+      while bits_in_buffer < bit_width {
+        bit_buffer = bit_buffer | (data[offset].to_uint64() << bits_in_buffer)
+        bits_in_buffer += 8
+        offset += 1
+      }
+      values.push(bit_buffer & mask)
+      bit_buffer = bit_buffer >> bit_width
+      bits_in_buffer -= bit_width
+    }
+    return values
+  }
+  for index in 0..<count {
+    let bit_offset = index * bit_width
+    let byte_index = start + bit_offset / 8
+    let shift = bit_offset % 8
+    let low = read_partial_u64_le(data, byte_index) >> shift
+    let spill_bits = shift + bit_width - 64
+    if spill_bits > 0 {
+      let high_byte = if byte_index + 8 < data.length() {
+        data[byte_index + 8].to_uint64()
+      } else {
+        UInt64::default()
+      }
+      values.push(
+        low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift)),
+      )
+    } else {
+      values.push(low & mask)
+    }
   }
   values
 }
@@ -93,7 +145,7 @@ fn decode_rle_hybrid(
   } else {
     data.length()
   }
-  let values : Array[Int] = []
+  let values : Array[Int] = Array::new(capacity=count)
   if bit_width == 0 {
     for _ in 0..<count {
       values.push(0)
@@ -112,10 +164,13 @@ fn decode_rle_hybrid(
         repeated = repeated | (data[offset + i].to_int() << (i * 8))
       }
       offset += byte_width
-      for _ in 0..<run_len {
-        if values.length() < count {
-          values.push(repeated)
-        }
+      let values_to_take = if count - values.length() < run_len {
+        count - values.length()
+      } else {
+        run_len
+      }
+      for _ in 0..<values_to_take {
+        values.push(repeated)
       }
     } else {
       let groups = header >> 1
@@ -123,10 +178,13 @@ fn decode_rle_hybrid(
       let byte_len = ceil_div(group_values * bit_width, 8)
       let unpacked = unpack_lsb_bitpacked(data, offset, bit_width, group_values)
       offset += byte_len
-      for value in unpacked {
-        if values.length() < count {
-          values.push(value.to_int())
-        }
+      let values_to_take = if count - values.length() < group_values {
+        count - values.length()
+      } else {
+        group_values
+      }
+      for index in 0..<values_to_take {
+        values.push(unpacked[index].to_int())
       }
     }
   }
@@ -150,11 +208,12 @@ fn decode_delta_binary_packed(
   if values_per_miniblock <= 0 {
     invalid_data("Invalid DELTA_BINARY_PACKED miniblock size")
   }
-  let values : Array[Int64] = [first_value]
+  let values : Array[Int64] = Array::new(capacity=total_count)
+  values.push(first_value)
   let mut previous = first_value
   while values.length() < total_count {
     let min_delta = reader.read_i64()
-    let bit_widths : Array[Int] = []
+    let bit_widths : Array[Int] = Array::new(capacity=miniblock_count)
     for _ in 0..<miniblock_count {
       bit_widths.push(reader.read_byte().to_int())
     }
