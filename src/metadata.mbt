@@ -4,6 +4,7 @@ fn read_schema_element(
 ) -> SchemaElementMeta raise ParquetError {
   reader.begin_struct()
   let mut type_code : Int? = None
+  let mut type_length : Int? = None
   let mut repetition_type : Int? = None
   let mut name = ""
   let mut num_children : Int? = None
@@ -18,6 +19,7 @@ fn read_schema_element(
       Some((field_id, wire_type)) =>
         match field_id {
           1 => type_code = Some(reader.read_i32())
+          2 => type_length = Some(reader.read_i32())
           3 => repetition_type = Some(reader.read_i32())
           4 => name = reader.read_string()
           5 => num_children = Some(reader.read_i32())
@@ -26,7 +28,14 @@ fn read_schema_element(
         }
     }
   }
-  { type_code, repetition_type, name, num_children, converted_type }
+  {
+    type_code,
+    type_length,
+    repetition_type,
+    name,
+    num_children,
+    converted_type,
+  }
 }
 
 ///|
@@ -42,6 +51,7 @@ fn read_column_metadata(
   let mut total_uncompressed_size = 0L
   let mut total_compressed_size = 0L
   let mut data_page_offset = 0L
+  let mut dictionary_page_offset : Int64? = None
   let mut done = false
   while not(done) {
     match reader.read_field_begin() {
@@ -79,10 +89,7 @@ fn read_column_metadata(
           6 => total_uncompressed_size = reader.read_i64()
           7 => total_compressed_size = reader.read_i64()
           9 => data_page_offset = reader.read_i64()
-          11 => {
-            let _dictionary_page_offset = reader.read_i64()
-            ()
-          }
+          11 => dictionary_page_offset = Some(reader.read_i64())
           _ => reader.skip(wire_type)
         }
     }
@@ -99,6 +106,7 @@ fn read_column_metadata(
     total_uncompressed_size,
     total_compressed_size,
     data_page_offset,
+    dictionary_page_offset,
   }
 }
 
@@ -314,7 +322,7 @@ fn read_data_page_header_v2(
 ///|
 fn read_dictionary_page_header(
   reader : CompactReader,
-) -> Unit raise ParquetError {
+) -> DictionaryPageHeaderMeta raise ParquetError {
   reader.begin_struct()
   let mut num_values = -1
   let mut encoding = -1
@@ -336,7 +344,7 @@ fn read_dictionary_page_header(
   if num_values < 0 || encoding < 0 {
     invalid_data("Missing DictionaryPageHeader fields")
   }
-  ()
+  { num_values, encoding }
 }
 
 ///|
@@ -351,6 +359,7 @@ fn read_page_header(
   let mut compressed_page_size = -1
   let mut data_page : DataPageHeaderMeta? = None
   let mut data_page_v2 : DataPageHeaderV2Meta? = None
+  let mut dictionary_page : DictionaryPageHeaderMeta? = None
   let mut done = false
   while not(done) {
     match reader.read_field_begin() {
@@ -364,7 +373,7 @@ fn read_page_header(
           2 => uncompressed_page_size = reader.read_i32()
           3 => compressed_page_size = reader.read_i32()
           5 => data_page = Some(read_data_page_header(reader))
-          7 => read_dictionary_page_header(reader)
+          7 => dictionary_page = Some(read_dictionary_page_header(reader))
           8 => data_page_v2 = Some(read_data_page_header_v2(reader))
           _ => reader.skip(wire_type)
         }
@@ -374,7 +383,13 @@ fn read_page_header(
     invalid_data("Missing PageHeader fields")
   }
   (
-    { page_type, compressed_page_size, data_page, data_page_v2 },
+    {
+      page_type,
+      compressed_page_size,
+      data_page,
+      data_page_v2,
+      dictionary_page,
+    },
     reader.offset - start,
   )
 }
@@ -393,18 +408,29 @@ fn to_column_type(
   type_code : Int,
   converted_type : Int?,
 ) -> ColumnType raise ParquetError {
-  match type_code {
-    1 => Int32
-    2 => Int64
-    6 =>
-      match converted_type {
-        Some(0) => String
-        _ => Binary
-      }
-    _ =>
-      raise ParquetError::Unsupported(
-        "Unsupported parquet physical type: \{type_code}",
-      )
+  if type_code == parquet_type_boolean {
+    Boolean
+  } else if type_code == parquet_type_int32 {
+    Int32
+  } else if type_code == parquet_type_int64 {
+    Int64
+  } else if type_code == parquet_type_int96 {
+    Binary
+  } else if type_code == parquet_type_float {
+    Float
+  } else if type_code == parquet_type_double {
+    Double
+  } else if type_code == parquet_type_byte_array {
+    match converted_type {
+      Some(0) => String
+      _ => Binary
+    }
+  } else if type_code == parquet_type_fixed_len_byte_array {
+    Binary
+  } else {
+    raise ParquetError::Unsupported(
+      "Unsupported parquet physical type: \{type_code}",
+    )
   }
 }
 
@@ -460,6 +486,15 @@ fn build_leaf_columns(
                   repetition,
                   max_definition_level: next_definition,
                   max_repetition_level: next_repetition,
+                  fixed_length: match element.type_length {
+                    Some(value) => Some(value)
+                    None =>
+                      if type_code == parquet_type_int96 {
+                        Some(12)
+                      } else {
+                        None
+                      }
+                  },
                 },
               ],
             )

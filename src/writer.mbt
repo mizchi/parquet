@@ -12,6 +12,10 @@ fn assert_flat_supported(file : ParquetFile) -> Unit raise ParquetError {
     if column.repetition == Repeated {
       unsupported("Repeated columns are not supported by the writer yet")
     }
+    match column.column_type {
+      Int32 | Int64 | String | Binary => ()
+      _ => unsupported("This column type is not supported by the writer yet")
+    }
   }
 }
 
@@ -66,6 +70,20 @@ fn collect_column_values(
 }
 
 ///|
+fn writer_type_code(column_type : ColumnType) -> Int raise ParquetError {
+  match column_type {
+    Int32 => parquet_type_int32
+    Int64 => parquet_type_int64
+    String => parquet_type_byte_array
+    Binary => parquet_type_byte_array
+    _ => {
+      unsupported("This column type is not supported by the writer yet")
+      0
+    }
+  }
+}
+
+///|
 fn encode_plain_non_null_values(
   values : Array[Value],
   column_type : ColumnType,
@@ -84,6 +102,12 @@ fn encode_plain_non_null_values(
         sink.push_u32_le(v.length())
         sink.push_bytes(v)
       }
+      (Boolean, _) =>
+        unsupported("BOOLEAN columns are not supported by the writer yet")
+      (Float, _) =>
+        unsupported("FLOAT columns are not supported by the writer yet")
+      (Double, _) =>
+        unsupported("DOUBLE columns are not supported by the writer yet")
       (_, Null) => ()
       _ => unsupported("Column values do not match declared column type")
     }
@@ -161,12 +185,7 @@ fn encode_parquet(file : ParquetFile) -> Bytes raise ParquetError {
     column_chunks.push({
       file_offset: 0L,
       meta_data: {
-        type_code: match column.column_type {
-          Int32 => parquet_type_int32
-          Int64 => parquet_type_int64
-          String => parquet_type_byte_array
-          Binary => parquet_type_byte_array
-        },
+        type_code: writer_type_code(column.column_type),
         encodings: [encoding_plain, encoding_rle],
         path_in_schema: [column.name],
         codec: codec_uncompressed,
@@ -174,6 +193,7 @@ fn encode_parquet(file : ParquetFile) -> Bytes raise ParquetError {
         total_uncompressed_size: page.length().to_int64(),
         total_compressed_size: page.length().to_int64(),
         data_page_offset: page_offset.to_int64(),
+        dictionary_page_offset: None,
       },
     })
   }
@@ -198,15 +218,7 @@ fn encode_parquet(file : ParquetFile) -> Bytes raise ParquetError {
   for column in file.columns {
     let element = CompactWriter::new()
     element.begin_struct()
-    element.write_i32_field(
-      1,
-      match column.column_type {
-        Int32 => parquet_type_int32
-        Int64 => parquet_type_int64
-        String => parquet_type_byte_array
-        Binary => parquet_type_byte_array
-      },
-    )
+    element.write_i32_field(1, writer_type_code(column.column_type))
     element.write_i32_field(
       3,
       match column.repetition {

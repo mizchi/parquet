@@ -1,6 +1,7 @@
 ///|
 priv struct SchemaElementMeta {
   type_code : Int?
+  type_length : Int?
   repetition_type : Int?
   name : String
   num_children : Int?
@@ -17,6 +18,7 @@ priv struct ColumnMetaDataMeta {
   total_uncompressed_size : Int64
   total_compressed_size : Int64
   data_page_offset : Int64
+  dictionary_page_offset : Int64?
 }
 
 ///|
@@ -61,6 +63,13 @@ priv struct PageHeaderMeta {
   compressed_page_size : Int
   data_page : DataPageHeaderMeta?
   data_page_v2 : DataPageHeaderV2Meta?
+  dictionary_page : DictionaryPageHeaderMeta?
+}
+
+///|
+priv struct DictionaryPageHeaderMeta {
+  num_values : Int
+  encoding : Int
 }
 
 ///|
@@ -70,4 +79,5 @@ priv struct LeafColumnMeta {
   repetition : Repetition
   max_definition_level : Int
   max_repetition_level : Int
+  fixed_length : Int?
 }

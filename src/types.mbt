@@ -1,7 +1,10 @@
 ///|
 pub(all) enum ColumnType {
+  Boolean
   Int32
   Int64
+  Float
+  Double
   String
   Binary
 } derive(Show, Eq)
@@ -15,8 +18,11 @@ pub(all) enum Repetition {
 
 ///|
 pub(all) enum Value {
+  Boolean(Bool)
   Int32(Int)
   Int64(Int64)
+  Float(Float)
+  Double(Double)
   String(String)
   Binary(Bytes)
   Null

@@ -54,6 +54,9 @@ fn value_to_cell(value : @parquet.Value) -> String {
     @parquet.Value::Null => ""
     @parquet.Value::Int32(v) => v.to_string()
     @parquet.Value::Int64(v) => v.to_string()
+    @parquet.Value::Boolean(v) => v.to_string()
+    @parquet.Value::Float(v) => v.to_string()
+    @parquet.Value::Double(v) => v.to_string()
     @parquet.Value::String(v) => v
     @parquet.Value::Binary(v) => v.to_unchecked_string()
   }
@@ -74,6 +77,31 @@ fn read_fixture(name : String) -> Bytes {
 ///|
 fn read_fixture_text(name : String) -> String {
   try! @fs.read_file_to_string("fixtures/apache-parquet-testing/data/" + name)
+}
+
+///|
+fn bytes_to_hex(bytes : Bytes) -> String {
+  let out = StringBuilder::new()
+  for byte in bytes {
+    let value = byte.to_int()
+    let high = value / 16
+    let low = value % 16
+    out.write_char(
+      if high < 10 {
+        Int::unsafe_to_char(48 + high)
+      } else {
+        Int::unsafe_to_char(55 + high)
+      },
+    )
+    out.write_char(
+      if low < 10 {
+        Int::unsafe_to_char(48 + low)
+      } else {
+        Int::unsafe_to_char(55 + low)
+      },
+    )
+  }
+  out.to_string()
 }
 
 ///|
@@ -127,6 +155,76 @@ test "reads delta required columns fixture" {
   assert_fixture(
     "delta_encoding_required_column.parquet", "delta_encoding_required_column_expect.csv",
   )
+}
+
+///|
+test "reads int32 fixture with null pages" {
+  let file = try! @parquet.read_bytes(
+    read_fixture("int32_with_null_pages.parquet"),
+  )
+  assert_eq(file.columns().length(), 1)
+  assert_eq(file.columns()[0].name(), "int32_field")
+  assert_eq(file.rows().length(), 1000)
+  let mut null_count = 0
+  let mut min_value = 2147483647
+  let mut max_value = -2147483648
+  let first_twelve : Array[String] = []
+  for row_index in 0..<file.rows().length() {
+    let value = file.rows()[row_index][0]
+    if row_index < 12 {
+      first_twelve.push(value_to_cell(value))
+    }
+    match value {
+      @parquet.Value::Int32(v) => {
+        if v < min_value {
+          min_value = v
+        }
+        if v > max_value {
+          max_value = v
+        }
+      }
+      @parquet.Value::Null => null_count += 1
+      _ => assert_true(false)
+    }
+  }
+  assert_eq(null_count, 275)
+  assert_eq(min_value, -2136906554)
+  assert_eq(max_value, 2145722375)
+  assert_eq(first_twelve, [
+    "-654807448", "-465559769", "-34563097", "398454479", "", "2018642597", "486675473",
+    "546345848", "-117215667", "-352034204", "-1172816214", "-2023202216",
+  ])
+}
+
+///|
+test "reads fixed length byte array fixture" {
+  let file = try! @parquet.read_bytes(
+    read_fixture("fixed_length_byte_array.parquet"),
+  )
+  assert_eq(file.columns().length(), 1)
+  assert_eq(file.columns()[0].name(), "flba_field")
+  assert_eq(file.columns()[0].column_type(), @parquet.Binary)
+  assert_eq(file.rows().length(), 1000)
+  let values : Array[String] = []
+  for row in file.rows() {
+    match row[0] {
+      @parquet.Value::Binary(bytes) => values.push(bytes_to_hex(bytes))
+      @parquet.Value::Null => assert_true(false)
+      _ => assert_true(false)
+    }
+  }
+  assert_eq(values[0], "000003E8")
+  assert_eq(values[1], "000003E7")
+  assert_eq(values[2], "000003E6")
+  assert_eq(values[3], "000003E5")
+  assert_eq(values[4], "000003E4")
+  assert_eq(values[5], "000003E3")
+  assert_eq(values[6], "000003E2")
+  assert_eq(values[7], "000003E1")
+  assert_eq(values[8], "000003DF")
+  assert_eq(values[9], "000003DE")
+  assert_eq(values[10], "000003DD")
+  assert_eq(values[11], "000003DC")
 }
 
 ///|

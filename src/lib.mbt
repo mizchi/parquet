@@ -16,8 +16,8 @@ pub fn read_bytes(data : Bytes) -> ParquetFile raise ParquetError {
 ///|
 /// Encode a parquet document to bytes.
 ///
-/// The current writer supports flat schemas of `Int32`, `Int64`, `String`, and
-/// `Binary`, with `Required` or `Optional` repetition.
+/// The current writer supports flat schemas of `Int32`, `Int64`, `String`,
+/// and `Binary`, with `Required` or `Optional` repetition.
 pub fn write_bytes(file : ParquetFile) -> Bytes raise ParquetError {
   encode_parquet(file)
 }

@@ -36,8 +36,11 @@ pub impl Eq for Column
 pub impl Show for Column
 
 pub(all) enum ColumnType {
+  Boolean
   Int32
   Int64
+  Float
+  Double
   String
   Binary
 }
@@ -64,8 +67,11 @@ pub impl Eq for Repetition
 pub impl Show for Repetition
 
 pub(all) enum Value {
+  Boolean(Bool)
   Int32(Int)
   Int64(Int64)
+  Float(Float)
+  Double(Double)
   String(String)
   Binary(Bytes)
   Null

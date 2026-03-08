@@ -3,10 +3,7 @@ fn read_u32_le(data : Bytes, start : Int) -> Int raise ParquetError {
   if start < 0 || start + 4 > data.length() {
     invalid_data("Unexpected end of buffer while reading u32")
   }
-  data[start].to_int() |
-  (data[start + 1].to_int() << 8) |
-  (data[start + 2].to_int() << 16) |
-  (data[start + 3].to_int() << 24)
+  data.unsafe_read_uint32_le(start).reinterpret_as_int()
 }
 
 ///|
@@ -19,11 +16,28 @@ fn read_i64_le(data : Bytes, start : Int) -> Int64 raise ParquetError {
   if start < 0 || start + 8 > data.length() {
     invalid_data("Unexpected end of buffer while reading i64")
   }
-  let mut raw = UInt64::default()
-  for i in 0..<8 {
-    raw = raw | (data[start + i].to_uint64() << (i * 8))
+  data.unsafe_read_uint64_le(start).reinterpret_as_int64()
+}
+
+///|
+fn read_u64_le(data : Bytes, start : Int) -> UInt64 raise ParquetError {
+  if start < 0 || start + 8 > data.length() {
+    invalid_data("Unexpected end of buffer while reading u64")
   }
-  raw.reinterpret_as_int64()
+  data.unsafe_read_uint64_le(start)
+}
+
+///|
+fn read_f32_le(data : Bytes, start : Int) -> Float raise ParquetError {
+  if start < 0 || start + 4 > data.length() {
+    invalid_data("Unexpected end of buffer while reading f32")
+  }
+  Float::reinterpret_from_uint(data.unsafe_read_uint32_le(start))
+}
+
+///|
+fn read_f64_le(data : Bytes, start : Int) -> Double raise ParquetError {
+  read_u64_le(data, start).reinterpret_as_double()
 }
 
 ///|
@@ -219,15 +233,58 @@ fn decode_delta_byte_array(
 }
 
 ///|
+fn decode_plain_boolean_values(
+  data : Bytes,
+  start : Int,
+  count : Int,
+) -> (Array[Value], Int) raise ParquetError {
+  let values : Array[Value] = []
+  for index in 0..<count {
+    let byte_index = start + index / 8
+    let bit_index = index % 8
+    if byte_index >= data.length() {
+      invalid_data("Unexpected end of buffer while reading BOOLEAN values")
+    }
+    let bit = (data[byte_index].to_int() >> bit_index) & 1
+    values.push(Value::Boolean(bit == 1))
+  }
+  (values, ceil_div(count, 8))
+}
+
+///|
+fn decode_dictionary_indices(
+  data : Bytes,
+  start : Int,
+  count : Int,
+) -> (Array[Int], Int) raise ParquetError {
+  if start >= data.length() {
+    invalid_data("Unexpected end of buffer while reading dictionary indices")
+  }
+  let index_bit_width = data[start].to_int()
+  let (indices, consumed) = decode_rle_hybrid(
+    data,
+    start + 1,
+    index_bit_width,
+    count,
+    false,
+  )
+  (indices, 1 + consumed)
+}
+
+///|
 fn decode_plain_values(
   data : Bytes,
   start : Int,
-  column_type : ColumnType,
+  column : LeafColumnMeta,
   count : Int,
 ) -> (Array[Value], Int) raise ParquetError {
+  if column.column_type == Boolean {
+    return decode_plain_boolean_values(data, start, count)
+  }
   let mut offset = start
   let values : Array[Value] = []
-  match column_type {
+  match column.column_type {
+    Boolean => ()
     Int32 =>
       for _ in 0..<count {
         values.push(Value::Int32(read_i32_le(data, offset)))
@@ -236,6 +293,16 @@ fn decode_plain_values(
     Int64 =>
       for _ in 0..<count {
         values.push(Value::Int64(read_i64_le(data, offset)))
+        offset += 8
+      }
+    Float =>
+      for _ in 0..<count {
+        values.push(Value::Float(read_f32_le(data, offset)))
+        offset += 4
+      }
+    Double =>
+      for _ in 0..<count {
+        values.push(Value::Double(read_f64_le(data, offset)))
         offset += 8
       }
     String =>
@@ -253,8 +320,14 @@ fn decode_plain_values(
       }
     Binary =>
       for _ in 0..<count {
-        let len = read_u32_le(data, offset)
-        offset += 4
+        let len = match column.fixed_length {
+          Some(value) => value
+          None => {
+            let byte_len = read_u32_le(data, offset)
+            offset += 4
+            byte_len
+          }
+        }
         values.push(
           Value::Binary(data.view(start=offset, end=offset + len).to_bytes()),
         )
@@ -269,63 +342,83 @@ fn decode_non_null_values(
   data : Bytes,
   start : Int,
   encoding : Int,
-  column_type : ColumnType,
+  column : LeafColumnMeta,
   count : Int,
+  dictionary : Array[Value]?,
 ) -> (Array[Value], Int) raise ParquetError {
   if count == 0 {
     return ([], 0)
   }
-  match encoding {
-    0 => decode_plain_values(data, start, column_type, count)
-    5 =>
-      match column_type {
-        Int32 => {
-          let (values, consumed) = decode_delta_binary_packed(data, start)
-          let decoded : Array[Value] = []
-          for index in 0..<count {
-            decoded.push(Value::Int32(values[index].to_int()))
+  if encoding == encoding_plain_dictionary ||
+    encoding == encoding_rle_dictionary {
+    match dictionary {
+      Some(dictionary_values) => {
+        let (indices, consumed) = decode_dictionary_indices(data, start, count)
+        let decoded : Array[Value] = []
+        for index in indices {
+          match dictionary_values.get(index) {
+            Some(value) => decoded.push(value)
+            None => invalid_data("Dictionary index out of range")
           }
-          (decoded, consumed)
         }
-        Int64 => {
-          let (values, consumed) = decode_delta_binary_packed(data, start)
-          let decoded : Array[Value] = []
-          for index in 0..<count {
-            decoded.push(Value::Int64(values[index]))
-          }
-          (decoded, consumed)
-        }
-        _ => {
-          unsupported("DELTA_BINARY_PACKED is only valid for INT32/INT64")
-          ([], 0)
-        }
+        return (decoded, consumed)
       }
-    7 =>
-      match column_type {
-        String => {
-          let (values, consumed) = decode_delta_byte_array(data, start, count)
-          let decoded : Array[Value] = []
-          for value in values {
-            decoded.push(Value::String(bytes_to_utf8_string(value)))
-          }
-          (decoded, consumed)
-        }
-        Binary => {
-          let (values, consumed) = decode_delta_byte_array(data, start, count)
-          let decoded : Array[Value] = []
-          for value in values {
-            decoded.push(Value::Binary(value))
-          }
-          (decoded, consumed)
-        }
-        _ => {
-          unsupported("DELTA_BYTE_ARRAY is only valid for byte arrays")
-          ([], 0)
-        }
+      None => {
+        invalid_data("Dictionary encoded page without dictionary page")
+        return ([], 0)
       }
-    _ => {
-      unsupported("Unsupported parquet encoding: \{encoding}")
-      ([], 0)
     }
+  }
+  if encoding == encoding_plain {
+    decode_plain_values(data, start, column, count)
+  } else if encoding == encoding_delta_binary_packed {
+    match column.column_type {
+      Int32 => {
+        let (values, consumed) = decode_delta_binary_packed(data, start)
+        let decoded : Array[Value] = []
+        for index in 0..<count {
+          decoded.push(Value::Int32(values[index].to_int()))
+        }
+        (decoded, consumed)
+      }
+      Int64 => {
+        let (values, consumed) = decode_delta_binary_packed(data, start)
+        let decoded : Array[Value] = []
+        for index in 0..<count {
+          decoded.push(Value::Int64(values[index]))
+        }
+        (decoded, consumed)
+      }
+      _ => {
+        unsupported("DELTA_BINARY_PACKED is only valid for INT32/INT64")
+        ([], 0)
+      }
+    }
+  } else if encoding == encoding_delta_byte_array {
+    match column.column_type {
+      String => {
+        let (values, consumed) = decode_delta_byte_array(data, start, count)
+        let decoded : Array[Value] = []
+        for value in values {
+          decoded.push(Value::String(bytes_to_utf8_string(value)))
+        }
+        (decoded, consumed)
+      }
+      Binary => {
+        let (values, consumed) = decode_delta_byte_array(data, start, count)
+        let decoded : Array[Value] = []
+        for value in values {
+          decoded.push(Value::Binary(value))
+        }
+        (decoded, consumed)
+      }
+      _ => {
+        unsupported("DELTA_BYTE_ARRAY is only valid for byte arrays")
+        ([], 0)
+      }
+    }
+  } else {
+    unsupported("Unsupported parquet encoding: \{encoding}")
+    ([], 0)
   }
 }

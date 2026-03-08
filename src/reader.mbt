@@ -68,6 +68,7 @@ fn decode_data_page_v1(
   payload_offset : Int,
   header : DataPageHeaderMeta,
   column : LeafColumnMeta,
+  dictionary : Array[Value]?,
 ) -> Array[Value] raise ParquetError {
   if column.max_repetition_level > 0 {
     unsupported("Repeated columns are not supported yet")
@@ -97,8 +98,9 @@ fn decode_data_page_v1(
     data,
     value_offset,
     header.encoding,
-    column.column_type,
+    column,
     non_null_count,
+    dictionary,
   )
   if column.max_definition_level == 0 {
     decoded_values
@@ -117,6 +119,7 @@ fn decode_data_page_v2(
   payload_offset : Int,
   header : DataPageHeaderV2Meta,
   column : LeafColumnMeta,
+  dictionary : Array[Value]?,
 ) -> Array[Value] raise ParquetError {
   if column.max_repetition_level > 0 {
     unsupported("Repeated columns are not supported yet")
@@ -148,8 +151,9 @@ fn decode_data_page_v2(
     data,
     value_offset,
     header.encoding,
-    column.column_type,
+    column,
     non_null_count,
+    dictionary,
   )
   if column.max_definition_level == 0 {
     decoded_values
@@ -163,6 +167,25 @@ fn decode_data_page_v2(
 }
 
 ///|
+fn decode_dictionary_page(
+  data : Bytes,
+  payload_offset : Int,
+  header : DictionaryPageHeaderMeta,
+  column : LeafColumnMeta,
+) -> Array[Value] raise ParquetError {
+  if header.encoding != encoding_plain {
+    unsupported("Only PLAIN dictionary pages are supported right now")
+  }
+  let (values, _) = decode_plain_values(
+    data,
+    payload_offset,
+    column,
+    header.num_values,
+  )
+  values
+}
+
+///|
 fn decode_column_chunk(
   data : Bytes,
   chunk : ColumnChunkMeta,
@@ -171,9 +194,12 @@ fn decode_column_chunk(
   if chunk.meta_data.codec != codec_uncompressed {
     unsupported("Only UNCOMPRESSED parquet pages are supported right now")
   }
-  let mut offset = chunk.meta_data.data_page_offset.to_int()
+  let mut offset = chunk.meta_data.dictionary_page_offset
+    .unwrap_or(chunk.meta_data.data_page_offset)
+    .to_int()
   let target_values = chunk.meta_data.num_values.to_int()
   let values : Array[Value] = []
+  let mut dictionary : Array[Value]? = None
   while values.length() < target_values {
     let (page_header, page_header_len) = read_page_header(data, offset)
     let payload_offset = offset + page_header_len
@@ -181,7 +207,9 @@ fn decode_column_chunk(
       match page_header.data_page {
         Some(data_page) =>
           values.append(
-            decode_data_page_v1(data, payload_offset, data_page, column),
+            decode_data_page_v1(
+              data, payload_offset, data_page, column, dictionary,
+            ),
           )
         None => invalid_data("DATA_PAGE without data_page_header")
       }
@@ -189,12 +217,22 @@ fn decode_column_chunk(
       match page_header.data_page_v2 {
         Some(data_page_v2) =>
           values.append(
-            decode_data_page_v2(data, payload_offset, data_page_v2, column),
+            decode_data_page_v2(
+              data, payload_offset, data_page_v2, column, dictionary,
+            ),
           )
         None => invalid_data("DATA_PAGE_V2 without data_page_header_v2")
       }
     } else if page_header.page_type == page_type_dictionary_page {
-      unsupported("Dictionary pages are not supported yet")
+      match page_header.dictionary_page {
+        Some(dictionary_header) =>
+          dictionary = Some(
+            decode_dictionary_page(
+              data, payload_offset, dictionary_header, column,
+            ),
+          )
+        None => invalid_data("DICTIONARY_PAGE without dictionary_page_header")
+      }
     } else {
       unsupported("Unsupported page type: \{page_header.page_type}")
     }

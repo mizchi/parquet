@@ -11,13 +11,28 @@ let parquet_magic_2 = b'R'
 let parquet_magic_3 = b'1'
 
 ///|
+let parquet_type_boolean = 0
+
+///|
 let parquet_type_int32 = 1
 
 ///|
 let parquet_type_int64 = 2
 
 ///|
+let parquet_type_int96 = 3
+
+///|
+let parquet_type_float = 4
+
+///|
+let parquet_type_double = 5
+
+///|
 let parquet_type_byte_array = 6
+
+///|
+let parquet_type_fixed_len_byte_array = 7
 
 ///|
 let repetition_required = 0
@@ -35,7 +50,19 @@ let converted_type_utf8 = 0
 let encoding_plain = 0
 
 ///|
+let encoding_plain_dictionary = 2
+
+///|
 let encoding_rle = 3
+
+///|
+let encoding_delta_binary_packed = 5
+
+///|
+let encoding_delta_byte_array = 7
+
+///|
+let encoding_rle_dictionary = 8
 
 ///|
 let codec_uncompressed = 0
