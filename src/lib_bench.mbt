@@ -4,6 +4,26 @@ fn read_bench_fixture(name : String) -> Bytes {
 }
 
 ///|
+fn bench_bytes_from_ints(values : Array[Int]) -> Bytes {
+  Bytes::makei(values.length(), fn(index) { values[index].to_byte() })
+}
+
+///|
+fn optional_dictionary_level_data() -> Bytes {
+  bench_bytes_from_ints([3, 0xCB])
+}
+
+///|
+fn optional_dictionary_value_data() -> Bytes {
+  bench_bytes_from_ints([2, 4, 1, 2, 2, 4, 0])
+}
+
+///|
+fn optional_dictionary_values() -> Array[Value] {
+  [Value::String("zero"), Value::String("one"), Value::String("two")]
+}
+
+///|
 priv struct DeltaBenchContext {
   data : Bytes
   columns : Array[LeafColumnMeta]
@@ -56,6 +76,11 @@ fn delta_bench_context() -> DeltaBenchContext {
 ///|
 fn int32_null_pages_bench_context() -> DeltaBenchContext {
   fixture_bench_context("int32_with_null_pages.parquet")
+}
+
+///|
+fn delta_byte_array_bench_context() -> DeltaBenchContext {
+  fixture_bench_context("delta_byte_array.parquet")
 }
 
 ///|
@@ -283,6 +308,56 @@ test "read delta byte array benchmark" (b : @bench.T) {
 test "read delta byte array columnar benchmark" (b : @bench.T) {
   let data = read_bench_fixture("delta_byte_array.parquet")
   b.bench(() => ignore(try! read_bytes_columnar(data)))
+}
+
+///|
+test "delta byte array decode columns benchmark" (b : @bench.T) {
+  let ctx = delta_byte_array_bench_context()
+  b.bench(() => {
+    let values : Array[Array[Value]] = Array::new(capacity=ctx.columns.length())
+    for index in 0..<ctx.columns.length() {
+      values.push(
+        try! decode_column_chunk(
+          ctx.data,
+          ctx.row_group.columns[index],
+          ctx.columns[index],
+        ),
+      )
+    }
+    ignore(values)
+  })
+}
+
+///|
+test "delta byte array build rows benchmark" (b : @bench.T) {
+  let ctx = delta_byte_array_bench_context()
+  b.bench(() => {
+    ignore(
+      try! build_rows(ctx.columns.length(), ctx.column_values, ctx.row_count),
+    )
+  })
+}
+
+///|
+test "stream optional dictionary benchmark" (b : @bench.T) {
+  let level_data = optional_dictionary_level_data()
+  let value_data = optional_dictionary_value_data()
+  let dictionary_values = optional_dictionary_values()
+  b.bench(() => {
+    let target : Array[Value] = []
+    let cursor = try! DictionaryValueCursor::new(value_data, 0)
+    try! append_optional_dictionary_values_from_levels_range(
+      target,
+      level_data,
+      0,
+      level_data.length(),
+      1,
+      8,
+      cursor,
+      dictionary_values,
+    )
+    ignore(target)
+  })
 }
 
 ///|

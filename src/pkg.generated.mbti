@@ -4,7 +4,7 @@ package "mizchi/parquet"
 // Values
 pub fn new_column(String, ColumnType, Repetition) -> Column
 
-pub fn new_parquet_columnar_file(Array[Column], Array[Array[Value]], Int, String?) -> ParquetColumnarFile
+pub fn new_parquet_columnar_file(Array[Column], Array[ParquetColumnData], Int, String?) -> ParquetColumnarFile
 
 pub fn new_parquet_file(Array[Column], Array[Array[Value]], String?) -> ParquetFile
 
@@ -54,12 +54,31 @@ pub(all) enum ColumnType {
 pub impl Eq for ColumnType
 pub impl Show for ColumnType
 
+pub(all) enum ParquetColumnData {
+  Values(Array[Value])
+  BooleanValues(Array[Bool])
+  Int32Values(Array[Int])
+  NullableInt32Values(Array[Int?])
+  Int64Values(Array[Int64])
+  TimestampMicrosValues(Array[Int64])
+  FloatValues(Array[Float])
+  DoubleValues(Array[Double])
+  Utf8Values(Array[Bytes])
+  NullableUtf8Values(Array[Bytes?])
+  BinaryValues(Array[Bytes])
+}
+pub fn ParquetColumnData::length(Self) -> Int
+pub impl Eq for ParquetColumnData
+pub impl Show for ParquetColumnData
+
 pub struct ParquetColumnarFile {
   columns : Array[Column]
-  column_values : Array[Array[Value]]
+  column_data : Array[ParquetColumnData]
   row_count : Int
+  mut column_values_cache : Array[Array[Value]]?
   created_by : String?
 }
+pub fn ParquetColumnarFile::column_data(Self) -> Array[ParquetColumnData]
 pub fn ParquetColumnarFile::column_values(Self) -> Array[Array[Value]]
 pub fn ParquetColumnarFile::columns(Self) -> Array[Column]
 pub fn ParquetColumnarFile::created_by(Self) -> String?
@@ -69,11 +88,15 @@ pub impl Show for ParquetColumnarFile
 
 pub struct ParquetFile {
   columns : Array[Column]
-  rows : Array[Array[Value]]
+  row_count : Int
+  column_data : Array[ParquetColumnData]
+  mut rows_cache : Array[Array[Value]]?
   created_by : String?
 }
+pub fn ParquetFile::column_data(Self) -> Array[ParquetColumnData]
 pub fn ParquetFile::columns(Self) -> Array[Column]
 pub fn ParquetFile::created_by(Self) -> String?
+pub fn ParquetFile::row_count(Self) -> Int
 pub fn ParquetFile::rows(Self) -> Array[Array[Value]]
 pub impl Eq for ParquetFile
 pub impl Show for ParquetFile

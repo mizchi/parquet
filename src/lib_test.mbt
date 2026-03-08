@@ -412,9 +412,41 @@ test "reads alltypes dictionary fixture" {
 ///|
 test "reads delta byte array fixture columnar" {
   let data = read_fixture("delta_byte_array.parquet")
-  let rows_file = try! @parquet.read_bytes(data)
-  let columnar = try! @parquet.read_bytes_columnar(data)
+  let rows_file = @parquet.read_bytes(data) catch {
+    err => fail(err.to_string())
+  }
+  let columnar = @parquet.read_bytes_columnar(data) catch {
+    err => fail(err.to_string())
+  }
   try! assert_columnar_matches_rows(columnar, rows_file)
+  match columnar.column_data()[0] {
+    @parquet.Utf8Values(values) => {
+      assert_eq(values.length(), columnar.row_count())
+      assert_eq(@utf8.decode_lossy(values[0][:]), "AAAAAAAAIODAAAAA")
+    }
+    @parquet.NullableUtf8Values(values) =>
+      match values[0] {
+        Some(value) =>
+          assert_eq(@utf8.decode_lossy(value[:]), "AAAAAAAAIODAAAAA")
+        None => fail("expected first utf8 value")
+      }
+    _ => fail("expected utf8 column: \{columnar.column_data()[0].to_string()}")
+  }
+}
+
+///|
+test "reads delta binary packed fixture typed columnar" {
+  let data = read_fixture("delta_binary_packed.parquet")
+  let columnar = try! @parquet.read_bytes_columnar(data)
+  let column_data = columnar.column_data()
+  assert_eq(column_data.length(), columnar.columns().length())
+  match column_data[0] {
+    @parquet.Int32Values(values) =>
+      assert_eq(values.length(), columnar.row_count())
+    @parquet.Int64Values(values) =>
+      assert_eq(values.length(), columnar.row_count())
+    _ => fail("expected dense integer column: \{column_data[0].to_string()}")
+  }
 }
 
 ///|
@@ -428,9 +460,45 @@ test "reads alltypes plain fixture columnar" {
 ///|
 test "reads int32 null pages fixture columnar" {
   let data = read_fixture("int32_with_null_pages.parquet")
-  let rows_file = try! @parquet.read_bytes(data)
-  let columnar = try! @parquet.read_bytes_columnar(data)
+  let rows_file = @parquet.read_bytes(data) catch {
+    err => fail(err.to_string())
+  }
+  let columnar = @parquet.read_bytes_columnar(data) catch {
+    err => fail(err.to_string())
+  }
   try! assert_columnar_matches_rows(columnar, rows_file)
+  match columnar.column_data()[0] {
+    @parquet.NullableInt32Values(values) => {
+      assert_eq(values.length(), columnar.row_count())
+      assert_eq(values[0], Some(-654807448))
+      assert_eq(values[4], None)
+    }
+    _ =>
+      fail(
+        "expected nullable int32 column: \{columnar.column_data()[0].to_string()}",
+      )
+  }
+}
+
+///|
+test "reads required utf8 column as typed data" {
+  let file = @parquet.new_parquet_file(
+    [@parquet.new_column("name", @parquet.String, @parquet.Required)],
+    [[@parquet.Value::String("alice")], [@parquet.Value::String("bob")]],
+    Some("test"),
+  )
+  let encoded = try! @parquet.write_bytes(file)
+  let columnar = try! @parquet.read_bytes_columnar(encoded)
+  match columnar.column_data()[0] {
+    @parquet.Utf8Values(values) => {
+      assert_eq(@utf8.decode_lossy(values[0][:]), "alice")
+      assert_eq(@utf8.decode_lossy(values[1][:]), "bob")
+    }
+    _ =>
+      fail(
+        "expected dense utf8 column: \{columnar.column_data()[0].to_string()}",
+      )
+  }
 }
 
 ///|

@@ -31,6 +31,107 @@ pub(all) enum Value {
 } derive(Show, Eq)
 
 ///|
+pub(all) enum ParquetColumnData {
+  Values(Array[Value])
+  BooleanValues(Array[Bool])
+  Int32Values(Array[Int])
+  NullableInt32Values(Array[Int?])
+  Int64Values(Array[Int64])
+  TimestampMicrosValues(Array[Int64])
+  FloatValues(Array[Float])
+  DoubleValues(Array[Double])
+  Utf8Values(Array[Bytes])
+  NullableUtf8Values(Array[Bytes?])
+  BinaryValues(Array[Bytes])
+} derive(Show, Eq)
+
+///|
+pub fn ParquetColumnData::length(self : ParquetColumnData) -> Int {
+  match self {
+    Values(values) => values.length()
+    BooleanValues(values) => values.length()
+    Int32Values(values) => values.length()
+    NullableInt32Values(values) => values.length()
+    Int64Values(values) => values.length()
+    TimestampMicrosValues(values) => values.length()
+    FloatValues(values) => values.length()
+    DoubleValues(values) => values.length()
+    Utf8Values(values) => values.length()
+    NullableUtf8Values(values) => values.length()
+    BinaryValues(values) => values.length()
+  }
+}
+
+///|
+fn ParquetColumnData::value_at(self : ParquetColumnData, index : Int) -> Value {
+  match self {
+    Values(values) => values[index]
+    BooleanValues(values) => Value::Boolean(values[index])
+    Int32Values(values) => Value::Int32(values[index])
+    NullableInt32Values(values) =>
+      match values[index] {
+        Some(value) => Value::Int32(value)
+        None => Value::Null
+      }
+    Int64Values(values) => Value::Int64(values[index])
+    TimestampMicrosValues(values) => Value::TimestampMicros(values[index])
+    FloatValues(values) => Value::Float(values[index])
+    DoubleValues(values) => Value::Double(values[index])
+    Utf8Values(values) => Value::String(bytes_to_utf8_string(values[index][:]))
+    NullableUtf8Values(values) =>
+      match values[index] {
+        Some(value) => Value::String(bytes_to_utf8_string(value[:]))
+        None => Value::Null
+      }
+    BinaryValues(values) => Value::Binary(values[index])
+  }
+}
+
+///|
+fn ParquetColumnData::to_values(self : ParquetColumnData) -> Array[Value] {
+  match self {
+    Values(values) => values
+    _ => Array::makei(self.length(), fn(index) { self.value_at(index) })
+  }
+}
+
+///|
+fn rows_to_column_data(
+  columns : Array[Column],
+  rows : Array[Array[Value]],
+) -> Array[ParquetColumnData] {
+  let column_count = columns.length()
+  Array::makei(column_count, fn(column_index) {
+    Values(rows.map(fn(row) { row[column_index] }))
+  })
+}
+
+///|
+fn materialize_rows(
+  column_count : Int,
+  column_data : Array[ParquetColumnData],
+  row_count : Int,
+) -> Array[Array[Value]] {
+  let rows : Array[Array[Value]] = Array::makei(row_count, fn(_) {
+    Array::make(column_count, Null)
+  })
+  for column_index in 0..<column_count {
+    let data = column_data[column_index]
+    for row_index in 0..<row_count {
+      rows[row_index].unsafe_set(column_index, data.value_at(row_index))
+    }
+  }
+  rows
+}
+
+///|
+fn materialize_column_values(
+  column_data : Array[ParquetColumnData],
+) -> Array[Array[Value]] {
+  column_data.map(fn(data) { data.to_values() })
+}
+
+///|
 pub struct Column {
   name : String
   column_type : ColumnType
@@ -64,9 +165,11 @@ pub fn Column::repetition(self : Column) -> Repetition {
 ///|
 pub struct ParquetFile {
   columns : Array[Column]
-  rows : Array[Array[Value]]
+  row_count : Int
+  column_data : Array[ParquetColumnData]
+  mut rows_cache : Array[Array[Value]]?
   created_by : String?
-} derive(Show, Eq)
+}
 
 ///|
 pub fn new_parquet_file(
@@ -74,7 +177,13 @@ pub fn new_parquet_file(
   rows : Array[Array[Value]],
   created_by : String?,
 ) -> ParquetFile {
-  { columns, rows, created_by }
+  {
+    columns,
+    row_count: rows.length(),
+    column_data: rows_to_column_data(columns, rows),
+    rows_cache: Some(rows),
+    created_by,
+  }
 }
 
 ///|
@@ -83,8 +192,29 @@ pub fn ParquetFile::columns(self : ParquetFile) -> Array[Column] {
 }
 
 ///|
+pub fn ParquetFile::row_count(self : ParquetFile) -> Int {
+  self.row_count
+}
+
+///|
+pub fn ParquetFile::column_data(self : ParquetFile) -> Array[ParquetColumnData] {
+  self.column_data
+}
+
+///|
 pub fn ParquetFile::rows(self : ParquetFile) -> Array[Array[Value]] {
-  self.rows
+  match self.rows_cache {
+    Some(rows) => rows
+    None => {
+      let rows = materialize_rows(
+        self.columns.length(),
+        self.column_data,
+        self.row_count,
+      )
+      self.rows_cache = Some(rows)
+      rows
+    }
+  }
 }
 
 ///|
@@ -93,21 +223,37 @@ pub fn ParquetFile::created_by(self : ParquetFile) -> String? {
 }
 
 ///|
+pub impl Eq for ParquetFile with equal(self, other) -> Bool {
+  self.columns == other.columns &&
+  self.row_count == other.row_count &&
+  self.created_by == other.created_by &&
+  self.rows() == other.rows()
+}
+
+///|
+pub impl Show for ParquetFile with output(self, logger) {
+  logger.write_string(
+    "ParquetFile { columns: \{self.columns.length()}, row_count: \{self.row_count} }",
+  )
+}
+
+///|
 pub struct ParquetColumnarFile {
   columns : Array[Column]
-  column_values : Array[Array[Value]]
+  column_data : Array[ParquetColumnData]
   row_count : Int
+  mut column_values_cache : Array[Array[Value]]?
   created_by : String?
-} derive(Show, Eq)
+}
 
 ///|
 pub fn new_parquet_columnar_file(
   columns : Array[Column],
-  column_values : Array[Array[Value]],
+  column_data : Array[ParquetColumnData],
   row_count : Int,
   created_by : String?,
 ) -> ParquetColumnarFile {
-  { columns, column_values, row_count, created_by }
+  { columns, column_data, row_count, column_values_cache: None, created_by }
 }
 
 ///|
@@ -118,10 +264,24 @@ pub fn ParquetColumnarFile::columns(
 }
 
 ///|
+pub fn ParquetColumnarFile::column_data(
+  self : ParquetColumnarFile,
+) -> Array[ParquetColumnData] {
+  self.column_data
+}
+
+///|
 pub fn ParquetColumnarFile::column_values(
   self : ParquetColumnarFile,
 ) -> Array[Array[Value]] {
-  self.column_values
+  match self.column_values_cache {
+    Some(values) => values
+    None => {
+      let values = materialize_column_values(self.column_data)
+      self.column_values_cache = Some(values)
+      values
+    }
+  }
 }
 
 ///|
@@ -132,4 +292,19 @@ pub fn ParquetColumnarFile::row_count(self : ParquetColumnarFile) -> Int {
 ///|
 pub fn ParquetColumnarFile::created_by(self : ParquetColumnarFile) -> String? {
   self.created_by
+}
+
+///|
+pub impl Eq for ParquetColumnarFile with equal(self, other) -> Bool {
+  self.columns == other.columns &&
+  self.row_count == other.row_count &&
+  self.created_by == other.created_by &&
+  self.column_values() == other.column_values()
+}
+
+///|
+pub impl Show for ParquetColumnarFile with output(self, logger) {
+  logger.write_string(
+    "ParquetColumnarFile { columns: \{self.columns.length()}, row_count: \{self.row_count} }",
+  )
 }

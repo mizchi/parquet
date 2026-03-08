@@ -1,14 +1,16 @@
 ///|
 fn assert_flat_supported(file : ParquetFile) -> Unit raise ParquetError {
-  if file.columns.is_empty() {
+  let columns = file.columns()
+  let rows = file.rows()
+  if columns.is_empty() {
     invalid_data("Cannot write parquet file without columns")
   }
-  for row in file.rows {
-    if row.length() != file.columns.length() {
+  for row in rows {
+    if row.length() != columns.length() {
       invalid_data("Row width does not match column count")
     }
   }
-  for column in file.columns {
+  for column in columns {
     if column.repetition == Repeated {
       unsupported("Repeated columns are not supported by the writer yet")
     }
@@ -66,7 +68,7 @@ fn collect_column_values(
   file : ParquetFile,
   column_index : Int,
 ) -> Array[Value] {
-  file.rows.map(fn(row) { row[column_index] })
+  file.rows().map(fn(row) { row[column_index] })
 }
 
 ///|
@@ -182,11 +184,13 @@ fn write_list_of_string(
 ///|
 fn encode_parquet(file : ParquetFile) -> Bytes raise ParquetError {
   assert_flat_supported(file)
+  let columns = file.columns()
+  let rows = file.rows()
   let body = ByteSink::new()
   let mut offset = 4
   let column_chunks : Array[ColumnChunkMeta] = []
-  for column_index in 0..<file.columns.length() {
-    let column = file.columns[column_index]
+  for column_index in 0..<columns.length() {
+    let column = columns[column_index]
     let values = collect_column_values(file, column_index)
     let page = encode_data_page(values, column)
     let page_offset = offset
@@ -199,7 +203,7 @@ fn encode_parquet(file : ParquetFile) -> Bytes raise ParquetError {
         encodings: [encoding_plain, encoding_rle],
         path_in_schema: [column.name],
         codec: codec_uncompressed,
-        num_values: file.rows.length().to_int64(),
+        num_values: rows.length().to_int64(),
         total_uncompressed_size: page.length().to_int64(),
         total_compressed_size: page.length().to_int64(),
         data_page_offset: page_offset.to_int64(),
@@ -210,7 +214,7 @@ fn encode_parquet(file : ParquetFile) -> Bytes raise ParquetError {
   let row_group = {
     columns: column_chunks,
     total_byte_size: body.length().to_int64(),
-    num_rows: file.rows.length().to_int64(),
+    num_rows: rows.length().to_int64(),
     file_offset: Some(4L),
     total_compressed_size: Some(body.length().to_int64()),
   }
@@ -218,14 +222,14 @@ fn encode_parquet(file : ParquetFile) -> Bytes raise ParquetError {
   footer.begin_struct()
   footer.write_i32_field(1, 1)
   footer.write_field_header(2, thrift_wire_list)
-  footer.write_list_header(file.columns.length() + 1, thrift_wire_struct)
+  footer.write_list_header(columns.length() + 1, thrift_wire_struct)
   let root = CompactWriter::new()
   root.begin_struct()
   root.write_string_field(4, "schema")
-  root.write_i32_field(5, file.columns.length())
+  root.write_i32_field(5, columns.length())
   root.end_struct()
   footer.sink.push_bytes(root.write_bytes()[:])
-  for column in file.columns {
+  for column in columns {
     let element = CompactWriter::new()
     element.begin_struct()
     element.write_i32_field(1, writer_type_code(column.column_type))
@@ -244,7 +248,7 @@ fn encode_parquet(file : ParquetFile) -> Bytes raise ParquetError {
     element.end_struct()
     footer.sink.push_bytes(element.write_bytes()[:])
   }
-  footer.write_i64_field(3, file.rows.length().to_int64())
+  footer.write_i64_field(3, rows.length().to_int64())
   footer.write_field_header(4, thrift_wire_list)
   footer.write_list_header(1, thrift_wire_struct)
   let row_group_writer = CompactWriter::new()

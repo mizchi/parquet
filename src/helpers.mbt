@@ -79,6 +79,19 @@ fn bytes_concat_prefix(
   prefix_len : Int,
   suffix : BytesView,
 ) -> Bytes {
+  if prefix_len == 0 {
+    return suffix.to_bytes()
+  }
+  if suffix.length() == 0 {
+    return if prefix_len == prev.length() {
+      prev
+    } else {
+      prev[:prefix_len].to_bytes()
+    }
+  }
+  if prefix_len == prev.length() {
+    return prev + suffix.to_bytes()
+  }
   Bytes::makei(prefix_len + suffix.length(), fn(i) {
     if i < prefix_len {
       prev[i]

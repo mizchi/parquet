@@ -260,6 +260,82 @@ fn append_lsb_bitpacked_deltas(
 }
 
 ///|
+fn append_lsb_bitpacked_int_deltas(
+  values : Array[Int],
+  data : Bytes,
+  start : Int,
+  bit_width : Int,
+  count : Int,
+  min_delta : Int,
+  previous : Int,
+) -> Int {
+  let mut current = previous
+  if count == 0 {
+    return previous
+  }
+  if bit_width == 0 {
+    for _ in 0..<count {
+      current += min_delta
+      values.push(current)
+    }
+    return current
+  }
+  if bit_width == 64 {
+    let mut offset = start
+    for _ in 0..<count {
+      current += min_delta + data.unsafe_read_uint64_le(offset).to_int()
+      values.push(current)
+      offset += 8
+    }
+    return current
+  }
+  let mask = bit_mask_u64(bit_width)
+  if bit_width <= 56 {
+    let mut offset = start
+    let mut bit_buffer = UInt64::default()
+    let mut bits_in_buffer = 0
+    for _ in 0..<count {
+      while bits_in_buffer < bit_width {
+        bit_buffer = bit_buffer | (data[offset].to_uint64() << bits_in_buffer)
+        bits_in_buffer += 8
+        offset += 1
+      }
+      current += min_delta + (bit_buffer & mask).to_int()
+      values.push(current)
+      bit_buffer = bit_buffer >> bit_width
+      bits_in_buffer -= bit_width
+    }
+    return current
+  }
+  let mut byte_index = start
+  let mut shift = 0
+  for _ in 0..<count {
+    let low = if byte_index + 8 <= data.length() {
+      data.unsafe_read_uint64_le(byte_index) >> shift
+    } else {
+      read_partial_u64_le(data, byte_index) >> shift
+    }
+    let spill_bits = shift + bit_width - 64
+    let unpacked = if spill_bits > 0 {
+      let high_byte = if byte_index + 8 < data.length() {
+        data[byte_index + 8].to_uint64()
+      } else {
+        UInt64::default()
+      }
+      low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
+    } else {
+      low & mask
+    }
+    current += min_delta + unpacked.to_int()
+    values.push(current)
+    let next_shift = shift + bit_width
+    byte_index += next_shift >> 3
+    shift = next_shift & 7
+  }
+  current
+}
+
+///|
 fn append_lsb_bitpacked_int32_delta_values(
   values : Array[Value],
   data : Bytes,
@@ -564,6 +640,451 @@ fn decode_delta_binary_packed(
 }
 
 ///|
+fn decode_delta_binary_packed_ints(
+  data : Bytes,
+  start : Int,
+) -> (Array[Int], Int) raise ParquetError {
+  let original_start = start
+  let data_len = data.length()
+  let (block_size, block_size_len) = read_varint32_at(data, start)
+  let start = start + block_size_len
+  let (miniblock_count, miniblock_len) = read_varint32_at(data, start)
+  let start = start + miniblock_len
+  let (total_count, total_count_len) = read_varint32_at(data, start)
+  let start = start + total_count_len
+  let (first_value, first_value_len) = read_zigzag_i64_at(data, start)
+  let mut offset = start + first_value_len
+  if block_size <= 0 || miniblock_count <= 0 || total_count <= 0 {
+    invalid_data("Invalid DELTA_BINARY_PACKED header")
+  }
+  let values_per_miniblock = block_size / miniblock_count
+  if values_per_miniblock <= 0 {
+    invalid_data("Invalid DELTA_BINARY_PACKED miniblock size")
+  }
+  let values : Array[Int] = Array::new(capacity=total_count)
+  values.push(first_value.to_int())
+  let mut previous = first_value.to_int()
+  let mut produced = 1
+  while produced < total_count {
+    let (min_delta, min_delta_len) = read_zigzag_i64_at(data, offset)
+    offset += min_delta_len
+    if offset + miniblock_count > data_len {
+      invalid_data("Unexpected end of delta miniblock widths")
+    }
+    let bit_widths_start = offset
+    offset += miniblock_count
+    let remaining = total_count - produced
+    if remaining >= block_size {
+      for miniblock_index in 0..<miniblock_count {
+        let bit_width = data[bit_widths_start + miniblock_index].to_int()
+        let byte_len = ceil_div(values_per_miniblock * bit_width, 8)
+        previous = append_lsb_bitpacked_int_deltas(
+          values,
+          data,
+          offset,
+          bit_width,
+          values_per_miniblock,
+          min_delta.to_int(),
+          previous,
+        )
+        offset += byte_len
+      }
+      produced += block_size
+    } else {
+      let mut remaining = remaining
+      for miniblock_index in 0..<miniblock_count {
+        if remaining <= 0 {
+          break
+        }
+        let bit_width = data[bit_widths_start + miniblock_index].to_int()
+        let byte_len = ceil_div(values_per_miniblock * bit_width, 8)
+        let values_to_take = if remaining < values_per_miniblock {
+          remaining
+        } else {
+          values_per_miniblock
+        }
+        previous = append_lsb_bitpacked_int_deltas(
+          values,
+          data,
+          offset,
+          bit_width,
+          values_to_take,
+          min_delta.to_int(),
+          previous,
+        )
+        offset += byte_len
+        produced += values_to_take
+        remaining -= values_to_take
+      }
+    }
+  }
+  (values, offset - original_start)
+}
+
+///|
+fn decode_delta_binary_packed_ints_into(
+  values : Array[Int],
+  data : Bytes,
+  start : Int,
+  count : Int,
+) -> Int raise ParquetError {
+  let original_start = start
+  let data_len = data.length()
+  let (block_size, block_size_len) = read_varint32_at(data, start)
+  let start = start + block_size_len
+  let (miniblock_count, miniblock_len) = read_varint32_at(data, start)
+  let start = start + miniblock_len
+  let (total_count, total_count_len) = read_varint32_at(data, start)
+  let start = start + total_count_len
+  let (first_value, first_value_len) = read_zigzag_i64_at(data, start)
+  let mut offset = start + first_value_len
+  if block_size <= 0 || miniblock_count <= 0 || total_count <= 0 {
+    invalid_data("Invalid DELTA_BINARY_PACKED header")
+  }
+  if total_count != count {
+    invalid_data("DELTA_BINARY_PACKED count mismatch")
+  }
+  let values_per_miniblock = block_size / miniblock_count
+  if values_per_miniblock <= 0 {
+    invalid_data("Invalid DELTA_BINARY_PACKED miniblock size")
+  }
+  values.push(first_value.to_int())
+  let mut previous = first_value.to_int()
+  let mut produced = 1
+  while produced < total_count {
+    let (min_delta, min_delta_len) = read_zigzag_i64_at(data, offset)
+    offset += min_delta_len
+    if offset + miniblock_count > data_len {
+      invalid_data("Unexpected end of delta miniblock widths")
+    }
+    let bit_widths_start = offset
+    offset += miniblock_count
+    let remaining = total_count - produced
+    if remaining >= block_size {
+      for miniblock_index in 0..<miniblock_count {
+        let bit_width = data[bit_widths_start + miniblock_index].to_int()
+        let byte_len = ceil_div(values_per_miniblock * bit_width, 8)
+        previous = append_lsb_bitpacked_int_deltas(
+          values,
+          data,
+          offset,
+          bit_width,
+          values_per_miniblock,
+          min_delta.to_int(),
+          previous,
+        )
+        offset += byte_len
+      }
+      produced += block_size
+    } else {
+      let mut remaining = remaining
+      for miniblock_index in 0..<miniblock_count {
+        if remaining <= 0 {
+          break
+        }
+        let bit_width = data[bit_widths_start + miniblock_index].to_int()
+        let byte_len = ceil_div(values_per_miniblock * bit_width, 8)
+        let values_to_take = if remaining < values_per_miniblock {
+          remaining
+        } else {
+          values_per_miniblock
+        }
+        previous = append_lsb_bitpacked_int_deltas(
+          values,
+          data,
+          offset,
+          bit_width,
+          values_to_take,
+          min_delta.to_int(),
+          previous,
+        )
+        offset += byte_len
+        produced += values_to_take
+        remaining -= values_to_take
+      }
+    }
+  }
+  offset - original_start
+}
+
+///|
+fn decode_delta_binary_packed_int64s_into(
+  values : Array[Int64],
+  data : Bytes,
+  start : Int,
+  count : Int,
+) -> Int raise ParquetError {
+  let original_start = start
+  let data_len = data.length()
+  let (block_size, block_size_len) = read_varint32_at(data, start)
+  let start = start + block_size_len
+  let (miniblock_count, miniblock_len) = read_varint32_at(data, start)
+  let start = start + miniblock_len
+  let (total_count, total_count_len) = read_varint32_at(data, start)
+  let start = start + total_count_len
+  let (first_value, first_value_len) = read_zigzag_i64_at(data, start)
+  let mut offset = start + first_value_len
+  if block_size <= 0 || miniblock_count <= 0 || total_count <= 0 {
+    invalid_data("Invalid DELTA_BINARY_PACKED header")
+  }
+  if total_count != count {
+    invalid_data("DELTA_BINARY_PACKED count mismatch")
+  }
+  let values_per_miniblock = block_size / miniblock_count
+  if values_per_miniblock <= 0 {
+    invalid_data("Invalid DELTA_BINARY_PACKED miniblock size")
+  }
+  values.push(first_value)
+  let mut previous = first_value
+  let mut produced = 1
+  while produced < total_count {
+    let (min_delta, min_delta_len) = read_zigzag_i64_at(data, offset)
+    offset += min_delta_len
+    if offset + miniblock_count > data_len {
+      invalid_data("Unexpected end of delta miniblock widths")
+    }
+    let bit_widths_start = offset
+    offset += miniblock_count
+    let remaining = total_count - produced
+    if remaining >= block_size {
+      for miniblock_index in 0..<miniblock_count {
+        let bit_width = data[bit_widths_start + miniblock_index].to_int()
+        let byte_len = ceil_div(values_per_miniblock * bit_width, 8)
+        previous = append_lsb_bitpacked_deltas(
+          values, data, offset, bit_width, values_per_miniblock, min_delta, previous,
+        )
+        offset += byte_len
+      }
+      produced += block_size
+    } else {
+      let mut remaining = remaining
+      for miniblock_index in 0..<miniblock_count {
+        if remaining <= 0 {
+          break
+        }
+        let bit_width = data[bit_widths_start + miniblock_index].to_int()
+        let byte_len = ceil_div(values_per_miniblock * bit_width, 8)
+        let values_to_take = if remaining < values_per_miniblock {
+          remaining
+        } else {
+          values_per_miniblock
+        }
+        previous = append_lsb_bitpacked_deltas(
+          values, data, offset, bit_width, values_to_take, min_delta, previous,
+        )
+        offset += byte_len
+        produced += values_to_take
+        remaining -= values_to_take
+      }
+    }
+  }
+  offset - original_start
+}
+
+///|
+priv struct DeltaBinaryPackedCursor {
+  data : Bytes
+  original_start : Int
+  total_count : Int
+  block_size : Int
+  miniblock_count : Int
+  values_per_miniblock : Int
+  mut next_block_offset : Int
+  mut produced : Int
+  mut previous : Int64
+  mut first_pending : Bool
+  mut block_remaining : Int
+  mut min_delta : Int64
+  mut bit_widths_start : Int
+  mut next_miniblock_payload_offset : Int
+  mut current_miniblock_index : Int
+  mut current_miniblock_remaining : Int
+  mut current_bit_width : Int
+  mut current_byte_index : Int
+  mut current_shift : Int
+}
+
+///|
+fn DeltaBinaryPackedCursor::new(
+  data : Bytes,
+  start : Int,
+) -> DeltaBinaryPackedCursor raise ParquetError {
+  let original_start = start
+  let (block_size, block_size_len) = read_varint32_at(data, start)
+  let start = start + block_size_len
+  let (miniblock_count, miniblock_len) = read_varint32_at(data, start)
+  let start = start + miniblock_len
+  let (total_count, total_count_len) = read_varint32_at(data, start)
+  let start = start + total_count_len
+  let (first_value, first_value_len) = read_zigzag_i64_at(data, start)
+  let offset = start + first_value_len
+  if block_size <= 0 || miniblock_count <= 0 || total_count <= 0 {
+    invalid_data("Invalid DELTA_BINARY_PACKED header")
+  }
+  let values_per_miniblock = block_size / miniblock_count
+  if values_per_miniblock <= 0 {
+    invalid_data("Invalid DELTA_BINARY_PACKED miniblock size")
+  }
+  {
+    data,
+    original_start,
+    total_count,
+    block_size,
+    miniblock_count,
+    values_per_miniblock,
+    next_block_offset: offset,
+    produced: 0,
+    previous: first_value,
+    first_pending: true,
+    block_remaining: 0,
+    min_delta: 0L,
+    bit_widths_start: 0,
+    next_miniblock_payload_offset: offset,
+    current_miniblock_index: 0,
+    current_miniblock_remaining: 0,
+    current_bit_width: 0,
+    current_byte_index: 0,
+    current_shift: 0,
+  }
+}
+
+///|
+fn DeltaBinaryPackedCursor::prepare_block(
+  self : DeltaBinaryPackedCursor,
+) -> Unit raise ParquetError {
+  if self.produced >= self.total_count {
+    invalid_data("Unexpected end of DELTA_BINARY_PACKED stream")
+  }
+  let (min_delta, min_delta_len) = read_zigzag_i64_at(
+    self.data,
+    self.next_block_offset,
+  )
+  let bit_widths_start = self.next_block_offset + min_delta_len
+  if bit_widths_start + self.miniblock_count > self.data.length() {
+    invalid_data("Unexpected end of delta miniblock widths")
+  }
+  let payload_start = bit_widths_start + self.miniblock_count
+  self.min_delta = min_delta
+  self.bit_widths_start = bit_widths_start
+  self.next_miniblock_payload_offset = payload_start
+  self.current_miniblock_index = 0
+  self.current_miniblock_remaining = 0
+  self.next_block_offset = payload_start
+  let remaining = self.total_count - self.produced
+  self.block_remaining = if remaining < self.block_size {
+    remaining
+  } else {
+    self.block_size
+  }
+}
+
+///|
+fn DeltaBinaryPackedCursor::prepare_miniblock(
+  self : DeltaBinaryPackedCursor,
+) -> Unit raise ParquetError {
+  if self.current_miniblock_remaining > 0 {
+    return
+  }
+  if self.block_remaining == 0 {
+    self.prepare_block()
+  }
+  let bit_width = self.data[self.bit_widths_start + self.current_miniblock_index].to_int()
+  let byte_len = ceil_div(self.values_per_miniblock * bit_width, 8)
+  if self.next_miniblock_payload_offset + byte_len > self.data.length() {
+    invalid_data("Unexpected end of delta miniblock payload")
+  }
+  let values_to_take = if self.block_remaining < self.values_per_miniblock {
+    self.block_remaining
+  } else {
+    self.values_per_miniblock
+  }
+  self.current_miniblock_index += 1
+  self.current_miniblock_remaining = values_to_take
+  self.current_bit_width = bit_width
+  self.current_byte_index = self.next_miniblock_payload_offset
+  self.current_shift = 0
+  self.next_miniblock_payload_offset += byte_len
+  self.next_block_offset = self.next_miniblock_payload_offset
+  self.block_remaining -= values_to_take
+}
+
+///|
+fn DeltaBinaryPackedCursor::next(
+  self : DeltaBinaryPackedCursor,
+) -> Int64 raise ParquetError {
+  if self.produced >= self.total_count {
+    invalid_data("Unexpected end of DELTA_BINARY_PACKED stream")
+  }
+  if self.first_pending {
+    self.first_pending = false
+    self.produced += 1
+    return self.previous
+  }
+  self.prepare_miniblock()
+  let unpacked = if self.current_bit_width == 0 {
+    UInt64::default()
+  } else if self.current_bit_width == 64 {
+    let value = if self.current_byte_index + 8 <= self.data.length() {
+      self.data.unsafe_read_uint64_le(self.current_byte_index)
+    } else {
+      read_partial_u64_le(self.data, self.current_byte_index)
+    }
+    self.current_byte_index += 8
+    value
+  } else {
+    let low = if self.current_byte_index + 8 <= self.data.length() {
+      self.data.unsafe_read_uint64_le(self.current_byte_index) >>
+      self.current_shift
+    } else {
+      read_partial_u64_le(self.data, self.current_byte_index) >>
+      self.current_shift
+    }
+    let spill_bits = self.current_shift + self.current_bit_width - 64
+    let value = if spill_bits > 0 {
+      let high_byte = if self.current_byte_index + 8 < self.data.length() {
+        self.data[self.current_byte_index + 8].to_uint64()
+      } else {
+        UInt64::default()
+      }
+      low |
+      ((high_byte & bit_mask_u64(spill_bits)) << (64 - self.current_shift))
+    } else {
+      low & bit_mask_u64(self.current_bit_width)
+    }
+    let next_shift = self.current_shift + self.current_bit_width
+    self.current_byte_index += next_shift >> 3
+    self.current_shift = next_shift & 7
+    value
+  }
+  self.current_miniblock_remaining -= 1
+  self.previous = self.previous +
+    self.min_delta +
+    unpacked.reinterpret_as_int64()
+  self.produced += 1
+  self.previous
+}
+
+///|
+fn DeltaBinaryPackedCursor::skip(
+  self : DeltaBinaryPackedCursor,
+  count : Int,
+) -> Unit raise ParquetError {
+  for _ in 0..<count {
+    ignore(self.next())
+  }
+}
+
+///|
+fn DeltaBinaryPackedCursor::consumed(
+  self : DeltaBinaryPackedCursor,
+) -> Int raise ParquetError {
+  if self.produced != self.total_count {
+    invalid_data("DELTA_BINARY_PACKED cursor is not exhausted")
+  }
+  self.next_block_offset - self.original_start
+}
+
+///|
 fn decode_delta_binary_packed_int32_values(
   data : Bytes,
   start : Int,
@@ -738,23 +1259,137 @@ fn decode_delta_binary_packed_int64_values_into(
 }
 
 ///|
-fn decode_delta_length_byte_array_layout(
+priv struct DeltaLengthByteArrayCursor {
+  data : Bytes
+  lengths : DeltaBinaryPackedCursor
+  mut suffix_offset : Int
+}
+
+///|
+fn DeltaLengthByteArrayCursor::new(
   data : Bytes,
   start : Int,
   count : Int,
-) -> (Array[Int64], Int, Int) raise ParquetError {
-  let (lengths, lengths_len) = decode_delta_binary_packed(data, start)
+) -> DeltaLengthByteArrayCursor raise ParquetError {
+  let scan = DeltaBinaryPackedCursor::new(data, start)
+  if scan.total_count != count {
+    invalid_data("DELTA_LENGTH_BYTE_ARRAY count mismatch")
+  }
+  scan.skip(count)
+  let suffix_data_start = start + scan.consumed()
+  {
+    data,
+    lengths: DeltaBinaryPackedCursor::new(data, start),
+    suffix_offset: suffix_data_start,
+  }
+}
+
+///|
+fn DeltaLengthByteArrayCursor::next(
+  self : DeltaLengthByteArrayCursor,
+) -> BytesView raise ParquetError {
+  let suffix_len = self.lengths.next().to_int()
+  if suffix_len < 0 || self.suffix_offset + suffix_len > self.data.length() {
+    invalid_data("Invalid DELTA_LENGTH_BYTE_ARRAY suffix length")
+  }
+  let value = self.data.view(
+    start=self.suffix_offset,
+    end=self.suffix_offset + suffix_len,
+  )
+  self.suffix_offset += suffix_len
+  value
+}
+
+///|
+priv struct DeltaByteArrayValueCursor {
+  prefixes : DeltaBinaryPackedCursor
+  suffixes : DeltaLengthByteArrayCursor
+  mut previous : Bytes
+}
+
+///|
+fn DeltaByteArrayValueCursor::new(
+  data : Bytes,
+  start : Int,
+  count : Int,
+) -> DeltaByteArrayValueCursor raise ParquetError {
+  let prefix_scan = DeltaBinaryPackedCursor::new(data, start)
+  if prefix_scan.total_count != count {
+    invalid_data("DELTA_BYTE_ARRAY prefix count mismatch")
+  }
+  prefix_scan.skip(count)
+  let suffixes_start = start + prefix_scan.consumed()
+  {
+    prefixes: DeltaBinaryPackedCursor::new(data, start),
+    suffixes: DeltaLengthByteArrayCursor::new(data, suffixes_start, count),
+    previous: Bytes::default(),
+  }
+}
+
+///|
+fn DeltaByteArrayValueCursor::append_into(
+  self : DeltaByteArrayValueCursor,
+  target : Array[Value],
+  count : Int,
+  column_type : ColumnType,
+) -> Unit raise ParquetError {
+  for _ in 0..<count {
+    let prefix_len = self.prefixes.next().to_int()
+    if prefix_len < 0 || prefix_len > self.previous.length() {
+      invalid_data("Invalid DELTA_BYTE_ARRAY prefix length")
+    }
+    let value = bytes_concat_prefix(
+      self.previous,
+      prefix_len,
+      self.suffixes.next(),
+    )
+    match column_type {
+      String => target.push(Value::String(bytes_to_utf8_string(value[:])))
+      Binary => target.push(Value::Binary(value))
+      _ => unsupported("DELTA_BYTE_ARRAY is only valid for byte arrays")
+    }
+    self.previous = value
+  }
+}
+
+///|
+fn DeltaByteArrayValueCursor::append_bytes_into(
+  self : DeltaByteArrayValueCursor,
+  target : Array[Bytes],
+  count : Int,
+) -> Unit raise ParquetError {
+  for _ in 0..<count {
+    let prefix_len = self.prefixes.next().to_int()
+    if prefix_len < 0 || prefix_len > self.previous.length() {
+      invalid_data("Invalid DELTA_BYTE_ARRAY prefix length")
+    }
+    let value = bytes_concat_prefix(
+      self.previous,
+      prefix_len,
+      self.suffixes.next(),
+    )
+    target.push(value)
+    self.previous = value
+  }
+}
+
+///|
+fn decode_delta_length_byte_array_layout_ints(
+  data : Bytes,
+  start : Int,
+  count : Int,
+) -> (Array[Int], Int, Int) raise ParquetError {
+  let (lengths, lengths_len) = decode_delta_binary_packed_ints(data, start)
   if lengths.length() != count {
     invalid_data("DELTA_LENGTH_BYTE_ARRAY count mismatch")
   }
   let values_offset = start + lengths_len
   let mut offset = values_offset
   for length in lengths {
-    let size = length.to_int()
-    if size < 0 || offset + size > data.length() {
+    if length < 0 || offset + length > data.length() {
       invalid_data("Invalid DELTA_LENGTH_BYTE_ARRAY suffix length")
     }
-    offset += size
+    offset += length
   }
   (lengths, values_offset, offset - start)
 }
@@ -774,6 +1409,18 @@ fn decode_delta_byte_array_values(
 }
 
 ///|
+fn decode_delta_byte_array_bytes_into(
+  target : Array[Bytes],
+  data : Bytes,
+  start : Int,
+  count : Int,
+) -> Int raise ParquetError {
+  let cursor = DeltaByteArrayValueCursor::new(data, start, count)
+  cursor.append_bytes_into(target, count)
+  cursor.suffixes.suffix_offset - start
+}
+
+///|
 fn decode_delta_byte_array_values_into(
   target : Array[Value],
   data : Bytes,
@@ -781,13 +1428,13 @@ fn decode_delta_byte_array_values_into(
   count : Int,
   column_type : ColumnType,
 ) -> Int raise ParquetError {
-  let (prefix_lengths, prefix_len_bytes) = decode_delta_binary_packed(
+  let (prefix_lengths, prefix_len_bytes) = decode_delta_binary_packed_ints(
     data, start,
   )
   if prefix_lengths.length() != count {
     invalid_data("DELTA_BYTE_ARRAY prefix count mismatch")
   }
-  let (suffix_lengths, suffix_data_start, suffix_len_bytes) = decode_delta_length_byte_array_layout(
+  let (suffix_lengths, suffix_data_start, suffix_len_bytes) = decode_delta_length_byte_array_layout_ints(
     data,
     start + prefix_len_bytes,
     count,
@@ -795,11 +1442,11 @@ fn decode_delta_byte_array_values_into(
   let mut previous = Bytes::default()
   let mut suffix_offset = suffix_data_start
   for index in 0..<count {
-    let prefix_len = prefix_lengths[index].to_int()
+    let prefix_len = prefix_lengths[index]
     if prefix_len < 0 || prefix_len > previous.length() {
       invalid_data("Invalid DELTA_BYTE_ARRAY prefix length")
     }
-    let suffix_len = suffix_lengths[index].to_int()
+    let suffix_len = suffix_lengths[index]
     if suffix_len < 0 || suffix_offset + suffix_len > data.length() {
       invalid_data("Invalid DELTA_LENGTH_BYTE_ARRAY suffix length")
     }
@@ -811,10 +1458,7 @@ fn decode_delta_byte_array_values_into(
     match column_type {
       String => target.push(Value::String(bytes_to_utf8_string(value[:])))
       Binary => target.push(Value::Binary(value))
-      _ => {
-        unsupported("DELTA_BYTE_ARRAY is only valid for byte arrays")
-        return 0
-      }
+      _ => unsupported("DELTA_BYTE_ARRAY is only valid for byte arrays")
     }
     previous = value
     suffix_offset += suffix_len
@@ -861,19 +1505,100 @@ fn decode_plain_boolean_values_into(
 }
 
 ///|
-fn append_lsb_bitpacked_dictionary_values(
-  target : Array[Value],
-  dictionary_values : Array[Value],
+priv struct DictionaryValueCursor {
+  data : Bytes
+  index_bit_width : Int
+  mut offset : Int
+  mut run_remaining : Int
+  mut repeated_run : Bool
+  mut repeated_index : Int
+  mut bitpacked_byte_index : Int
+  mut bitpacked_shift : Int
+}
+
+///|
+fn DictionaryValueCursor::new(
   data : Bytes,
   start : Int,
-  bit_width : Int,
+) -> DictionaryValueCursor raise ParquetError {
+  if start >= data.length() {
+    invalid_data("Unexpected end of buffer while reading dictionary indices")
+  }
+  {
+    data,
+    index_bit_width: data[start].to_int(),
+    offset: start + 1,
+    run_remaining: 0,
+    repeated_run: false,
+    repeated_index: 0,
+    bitpacked_byte_index: 0,
+    bitpacked_shift: 0,
+  }
+}
+
+///|
+fn DictionaryValueCursor::fill_run(
+  self : DictionaryValueCursor,
+  dictionary_len : Int,
+) -> Unit raise ParquetError {
+  if self.index_bit_width == 0 {
+    if dictionary_len == 0 {
+      invalid_data("Dictionary index out of range")
+    }
+    self.repeated_run = true
+    self.repeated_index = 0
+    self.run_remaining = Int::max(1, self.data.length())
+    return
+  }
+  if self.offset >= self.data.length() {
+    invalid_data("Unexpected end of buffer while reading dictionary indices")
+  }
+  let (header, header_len) = read_varint32_at(self.data, self.offset)
+  self.offset += header_len
+  if (header & 1) == 0 {
+    let run_len = header >> 1
+    let byte_width = ceil_div(self.index_bit_width, 8)
+    if self.offset + byte_width > self.data.length() {
+      invalid_data("Unexpected end of buffer while reading dictionary indices")
+    }
+    let mut repeated = 0
+    for i in 0..<byte_width {
+      repeated = repeated | (self.data[self.offset + i].to_int() << (i * 8))
+    }
+    if repeated >= dictionary_len {
+      invalid_data("Dictionary index out of range")
+    }
+    self.offset += byte_width
+    self.repeated_run = true
+    self.repeated_index = repeated
+    self.run_remaining = run_len
+    return
+  }
+  let groups = header >> 1
+  let group_values = groups * 8
+  let byte_len = ceil_div(group_values * self.index_bit_width, 8)
+  if self.offset + byte_len > self.data.length() {
+    invalid_data("Unexpected end of buffer while reading dictionary indices")
+  }
+  self.repeated_run = false
+  self.run_remaining = group_values
+  self.bitpacked_byte_index = self.offset
+  self.bitpacked_shift = 0
+  self.offset += byte_len
+}
+
+///|
+fn DictionaryValueCursor::append_into(
+  self : DictionaryValueCursor,
+  target : Array[Value],
   count : Int,
+  dictionary_values : Array[Value],
 ) -> Unit raise ParquetError {
   if count == 0 {
     return
   }
   let dictionary_len = dictionary_values.length()
-  if bit_width == 0 {
+  if self.index_bit_width == 0 {
     if dictionary_len == 0 {
       invalid_data("Dictionary index out of range")
     }
@@ -882,66 +1607,57 @@ fn append_lsb_bitpacked_dictionary_values(
     }
     return
   }
-  if bit_width == 64 {
-    let mut offset = start
-    for _ in 0..<count {
-      let index = data.unsafe_read_uint64_le(offset).to_int()
-      if index >= dictionary_len {
-        invalid_data("Dictionary index out of range")
-      }
-      target.push(dictionary_values[index])
-      offset += 8
+  let mask = bit_mask_u64(self.index_bit_width)
+  let mut remaining = count
+  while remaining > 0 {
+    if self.run_remaining == 0 {
+      self.fill_run(dictionary_len)
     }
-    return
-  }
-  let mask = bit_mask_u64(bit_width)
-  if bit_width <= 56 {
-    let mut offset = start
-    let mut bit_buffer = UInt64::default()
-    let mut bits_in_buffer = 0
-    for _ in 0..<count {
-      while bits_in_buffer < bit_width {
-        bit_buffer = bit_buffer | (data[offset].to_uint64() << bits_in_buffer)
-        bits_in_buffer += 8
-        offset += 1
-      }
-      let index = (bit_buffer & mask).to_int()
-      if index >= dictionary_len {
-        invalid_data("Dictionary index out of range")
-      }
-      target.push(dictionary_values[index])
-      bit_buffer = bit_buffer >> bit_width
-      bits_in_buffer -= bit_width
-    }
-    return
-  }
-  let mut byte_index = start
-  let mut shift = 0
-  for _ in 0..<count {
-    let low = if byte_index + 8 <= data.length() {
-      data.unsafe_read_uint64_le(byte_index) >> shift
+    let values_to_take = if remaining < self.run_remaining {
+      remaining
     } else {
-      read_partial_u64_le(data, byte_index) >> shift
+      self.run_remaining
     }
-    let spill_bits = shift + bit_width - 64
-    let unpacked = if spill_bits > 0 {
-      let high_byte = if byte_index + 8 < data.length() {
-        data[byte_index + 8].to_uint64()
-      } else {
-        UInt64::default()
+    if self.repeated_run {
+      for _ in 0..<values_to_take {
+        target.push(dictionary_values[self.repeated_index])
       }
-      low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
     } else {
-      low & mask
+      for _ in 0..<values_to_take {
+        let low = if self.bitpacked_byte_index + 8 <= self.data.length() {
+          self.data.unsafe_read_uint64_le(self.bitpacked_byte_index) >>
+          self.bitpacked_shift
+        } else {
+          read_partial_u64_le(self.data, self.bitpacked_byte_index) >>
+          self.bitpacked_shift
+        }
+        let spill_bits = self.bitpacked_shift + self.index_bit_width - 64
+        let unpacked = if spill_bits > 0 {
+          let high_byte = if self.bitpacked_byte_index + 8 < self.data.length() {
+            self.data[self.bitpacked_byte_index + 8].to_uint64()
+          } else {
+            UInt64::default()
+          }
+          low |
+          (
+            (high_byte & bit_mask_u64(spill_bits)) <<
+            (64 - self.bitpacked_shift)
+          )
+        } else {
+          low & mask
+        }
+        let index = unpacked.to_int()
+        if index >= dictionary_len {
+          invalid_data("Dictionary index out of range")
+        }
+        target.push(dictionary_values[index])
+        let next_shift = self.bitpacked_shift + self.index_bit_width
+        self.bitpacked_byte_index += next_shift >> 3
+        self.bitpacked_shift = next_shift & 7
+      }
     }
-    let index = unpacked.to_int()
-    if index >= dictionary_len {
-      invalid_data("Dictionary index out of range")
-    }
-    target.push(dictionary_values[index])
-    let next_shift = shift + bit_width
-    byte_index += next_shift >> 3
-    shift = next_shift & 7
+    self.run_remaining -= values_to_take
+    remaining -= values_to_take
   }
 }
 
@@ -967,61 +1683,9 @@ fn decode_dictionary_values_into(
   count : Int,
   dictionary_values : Array[Value],
 ) -> Int raise ParquetError {
-  if start >= data.length() {
-    invalid_data("Unexpected end of buffer while reading dictionary indices")
-  }
-  let index_bit_width = data[start].to_int()
-  if index_bit_width == 0 {
-    if dictionary_values.length() == 0 {
-      invalid_data("Dictionary index out of range")
-    }
-    for _ in 0..<count {
-      target.push(dictionary_values[0])
-    }
-    return 1
-  }
-  let mut offset = start + 1
-  let mut produced = 0
-  while produced < count && offset < data.length() {
-    let (header, header_len) = read_varint32_at(data, offset)
-    offset += header_len
-    if (header & 1) == 0 {
-      let run_len = header >> 1
-      let byte_width = ceil_div(index_bit_width, 8)
-      let mut repeated = 0
-      for i in 0..<byte_width {
-        repeated = repeated | (data[offset + i].to_int() << (i * 8))
-      }
-      offset += byte_width
-      let values_to_take = if count - produced < run_len {
-        count - produced
-      } else {
-        run_len
-      }
-      if repeated >= dictionary_values.length() {
-        invalid_data("Dictionary index out of range")
-      }
-      for _ in 0..<values_to_take {
-        target.push(dictionary_values[repeated])
-      }
-      produced += values_to_take
-    } else {
-      let groups = header >> 1
-      let group_values = groups * 8
-      let byte_len = ceil_div(group_values * index_bit_width, 8)
-      let values_to_take = if count - produced < group_values {
-        count - produced
-      } else {
-        group_values
-      }
-      append_lsb_bitpacked_dictionary_values(
-        target, dictionary_values, data, offset, index_bit_width, values_to_take,
-      )
-      offset += byte_len
-      produced += values_to_take
-    }
-  }
-  1 + (offset - (start + 1))
+  let cursor = DictionaryValueCursor::new(data, start)
+  cursor.append_into(target, count, dictionary_values)
+  cursor.offset - start
 }
 
 ///|
