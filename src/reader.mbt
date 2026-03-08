@@ -281,6 +281,98 @@ fn append_optional_values_from_boolean_levels_range(
 }
 
 ///|
+fn append_optional_plain_values_from_boolean_levels_range(
+  target : Array[Value],
+  level_data : Bytes,
+  start : Int,
+  end : Int,
+  max_level : Int,
+  count : Int,
+  value_data : Bytes,
+  value_offset : Int,
+  column : LeafColumnMeta,
+) -> Unit raise ParquetError {
+  let mut offset = start
+  let mut produced = 0
+  let mut value_offset = value_offset
+  while produced < count && offset < end {
+    let (header, header_len) = read_varint32_at(level_data, offset)
+    offset += header_len
+    if (header & 1) == 0 {
+      let run_len = header >> 1
+      let repeated = level_data[offset].to_int() & 1
+      offset += 1
+      let values_to_take = if count - produced < run_len {
+        count - produced
+      } else {
+        run_len
+      }
+      if repeated == max_level {
+        value_offset += decode_plain_values_into(
+          target, value_data, value_offset, column, values_to_take,
+        )
+      } else {
+        push_null_values(target, values_to_take)
+      }
+      produced += values_to_take
+    } else {
+      let groups = header >> 1
+      let group_values = groups * 8
+      let values_to_take = if count - produced < group_values {
+        count - produced
+      } else {
+        group_values
+      }
+      let mut run_index = 0
+      for byte_offset in 0..<groups {
+        if run_index >= values_to_take {
+          break
+        }
+        let packed = level_data[offset + byte_offset].to_int()
+        let remaining = values_to_take - run_index
+        let bits_to_take = if remaining < 8 { remaining } else { 8 }
+        let full_mask = if bits_to_take == 8 {
+          0xff
+        } else {
+          (1 << bits_to_take) - 1
+        }
+        let masked = packed & full_mask
+        if masked == full_mask {
+          value_offset += decode_plain_values_into(
+            target, value_data, value_offset, column, bits_to_take,
+          )
+        } else if masked == 0 {
+          push_null_values(target, bits_to_take)
+        } else {
+          let mut defined_run = 0
+          for bit_index in 0..<bits_to_take {
+            if ((masked >> bit_index) & 1) == max_level {
+              defined_run += 1
+            } else {
+              if defined_run > 0 {
+                value_offset += decode_plain_values_into(
+                  target, value_data, value_offset, column, defined_run,
+                )
+                defined_run = 0
+              }
+              target.push(Null)
+            }
+          }
+          if defined_run > 0 {
+            value_offset += decode_plain_values_into(
+              target, value_data, value_offset, column, defined_run,
+            )
+          }
+        }
+        run_index += bits_to_take
+      }
+      offset += groups
+      produced += values_to_take
+    }
+  }
+}
+
+///|
 fn append_optional_values_from_levels_range(
   target : Array[Value],
   data : Bytes,
@@ -382,6 +474,115 @@ fn append_optional_values_from_levels_range(
 }
 
 ///|
+fn append_optional_plain_values_from_levels_range(
+  target : Array[Value],
+  level_data : Bytes,
+  start : Int,
+  end : Int,
+  max_level : Int,
+  count : Int,
+  value_data : Bytes,
+  value_offset : Int,
+  column : LeafColumnMeta,
+) -> Unit raise ParquetError {
+  if max_level == 0 {
+    ignore(
+      decode_plain_values_into(target, value_data, value_offset, column, count),
+    )
+    return
+  }
+  let bit_width = bit_width(max_level)
+  if bit_width == 1 {
+    append_optional_plain_values_from_boolean_levels_range(
+      target, level_data, start, end, max_level, count, value_data, value_offset,
+      column,
+    )
+    return
+  }
+  let mut offset = start
+  let mut produced = 0
+  let mut value_offset = value_offset
+  let mask = bit_mask_u64(bit_width)
+  while produced < count && offset < end {
+    let (header, header_len) = read_varint32_at(level_data, offset)
+    offset += header_len
+    if (header & 1) == 0 {
+      let run_len = header >> 1
+      let byte_width = ceil_div(bit_width, 8)
+      let mut repeated = 0
+      for i in 0..<byte_width {
+        repeated = repeated | (level_data[offset + i].to_int() << (i * 8))
+      }
+      offset += byte_width
+      let values_to_take = if count - produced < run_len {
+        count - produced
+      } else {
+        run_len
+      }
+      if repeated == max_level {
+        value_offset += decode_plain_values_into(
+          target, value_data, value_offset, column, values_to_take,
+        )
+      } else {
+        push_null_values(target, values_to_take)
+      }
+      produced += values_to_take
+    } else {
+      let groups = header >> 1
+      let group_values = groups * 8
+      let byte_len = ceil_div(group_values * bit_width, 8)
+      let values_to_take = if count - produced < group_values {
+        count - produced
+      } else {
+        group_values
+      }
+      let mut byte_index = offset
+      let mut shift = 0
+      let mut defined_run = 0
+      for _ in 0..<values_to_take {
+        let low = if byte_index + 8 <= level_data.length() {
+          level_data.unsafe_read_uint64_le(byte_index) >> shift
+        } else {
+          read_partial_u64_le(level_data, byte_index) >> shift
+        }
+        let spill_bits = shift + bit_width - 64
+        let unpacked = if spill_bits > 0 {
+          let high_byte = if byte_index + 8 < level_data.length() {
+            level_data[byte_index + 8].to_uint64()
+          } else {
+            UInt64::default()
+          }
+          low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
+        } else {
+          low & mask
+        }
+        if unpacked.to_int() == max_level {
+          defined_run += 1
+        } else {
+          if defined_run > 0 {
+            value_offset += decode_plain_values_into(
+              target, value_data, value_offset, column, defined_run,
+            )
+            defined_run = 0
+          }
+          target.push(Null)
+        }
+        let next_shift = shift + bit_width
+        byte_index += next_shift >> 3
+        shift = next_shift & 7
+      }
+      if defined_run > 0 {
+        value_offset += decode_plain_values_into(
+          target, value_data, value_offset, column, defined_run,
+        )
+      }
+      offset += byte_len
+      produced += values_to_take
+    }
+  }
+}
+
+///|
 fn decode_data_page_v1(
   values : Array[Value],
   data : Bytes,
@@ -416,6 +617,20 @@ fn decode_data_page_v1(
   }
   let level_start = definition_offset + 4
   let level_end = definition_offset + definition_len
+  if header.encoding == encoding_plain && column.column_type != Boolean {
+    append_optional_plain_values_from_levels_range(
+      values,
+      data,
+      level_start,
+      level_end,
+      column.max_definition_level,
+      header.num_values,
+      data,
+      value_offset,
+      column,
+    )
+    return
+  }
   let non_null_count = count_levels_range_non_null(
     data,
     level_start,
@@ -492,6 +707,20 @@ fn decode_data_page_v2(
   }
   let definition_offset = payload_offset
   let definition_end = definition_offset + header.definition_levels_byte_length
+  if header.encoding == encoding_plain && column.column_type != Boolean {
+    append_optional_plain_values_from_levels_range(
+      values,
+      level_data,
+      definition_offset,
+      definition_end,
+      column.max_definition_level,
+      header.num_values,
+      value_data,
+      value_offset,
+      column,
+    )
+    return
+  }
   let non_null_count = count_levels_range_non_null(
     level_data,
     definition_offset,
