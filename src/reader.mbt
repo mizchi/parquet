@@ -912,13 +912,14 @@ fn build_rows(
       invalid_data("Column length mismatch while assembling rows")
     }
   }
-  let rows : Array[Array[Value]] = Array::new(capacity=row_count)
-  for row_index in 0..<row_count {
-    let row : Array[Value] = Array::new(capacity=column_count)
-    for column_index in 0..<column_count {
-      row.push(column_values[column_index][row_index])
+  let rows : Array[Array[Value]] = Array::makei(row_count, fn(_) {
+    Array::make(column_count, Null)
+  })
+  for column_index in 0..<column_count {
+    let column = column_values[column_index]
+    for row_index in 0..<row_count {
+      rows[row_index].unsafe_set(column_index, column[row_index])
     }
-    rows.push(row)
   }
   rows
 }
