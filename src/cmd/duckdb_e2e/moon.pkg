@@ -1,0 +1,8 @@
+import {
+  "mizchi/parquet" @parquet,
+  "moonbitlang/x/sys" @sys,
+}
+
+options(
+  "is-main": true,
+)

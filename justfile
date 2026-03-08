@@ -22,6 +22,10 @@ check:
 test:
     moon test --target {{target}}
 
+# Run benchmarks
+bench:
+    moon bench --target {{target}} --release
+
 # Update snapshot tests
 test-update:
     moon test --update --target {{target}}
@@ -33,6 +37,14 @@ run:
 # Generate type definition files
 info:
     moon info
+
+# Compare MoonBit reader benchmarks against a local Rust implementation
+bench-compare-rust:
+    node scripts/compare_rust_bench.mjs
+
+# DuckDB interoperability end-to-end checks
+e2e-duckdb:
+    node scripts/duckdb_e2e.mjs
 
 # Verify generated type definition files are up to date
 info-check:
