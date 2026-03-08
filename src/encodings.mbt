@@ -563,6 +563,20 @@ fn decode_delta_binary_packed_int32_values(
   start : Int,
   count : Int,
 ) -> (Array[Value], Int) raise ParquetError {
+  let values : Array[Value] = Array::new(capacity=count)
+  let consumed = decode_delta_binary_packed_int32_values_into(
+    values, data, start, count,
+  )
+  (values, consumed)
+}
+
+///|
+fn decode_delta_binary_packed_int32_values_into(
+  values : Array[Value],
+  data : Bytes,
+  start : Int,
+  count : Int,
+) -> Int raise ParquetError {
   let original_start = start
   let (block_size, block_size_len) = read_varint32_at(data, start)
   let start = start + block_size_len
@@ -582,7 +596,6 @@ fn decode_delta_binary_packed_int32_values(
   if values_per_miniblock <= 0 {
     invalid_data("Invalid DELTA_BINARY_PACKED miniblock size")
   }
-  let values : Array[Value] = Array::new(capacity=total_count)
   values.push(Value::Int32(first_value.to_int()))
   let mut previous = first_value
   let mut produced = 1
@@ -613,7 +626,7 @@ fn decode_delta_binary_packed_int32_values(
       produced += values_to_take
     }
   }
-  (values, offset - original_start)
+  offset - original_start
 }
 
 ///|
@@ -622,6 +635,20 @@ fn decode_delta_binary_packed_int64_values(
   start : Int,
   count : Int,
 ) -> (Array[Value], Int) raise ParquetError {
+  let values : Array[Value] = Array::new(capacity=count)
+  let consumed = decode_delta_binary_packed_int64_values_into(
+    values, data, start, count,
+  )
+  (values, consumed)
+}
+
+///|
+fn decode_delta_binary_packed_int64_values_into(
+  values : Array[Value],
+  data : Bytes,
+  start : Int,
+  count : Int,
+) -> Int raise ParquetError {
   let original_start = start
   let (block_size, block_size_len) = read_varint32_at(data, start)
   let start = start + block_size_len
@@ -641,7 +668,6 @@ fn decode_delta_binary_packed_int64_values(
   if values_per_miniblock <= 0 {
     invalid_data("Invalid DELTA_BINARY_PACKED miniblock size")
   }
-  let values : Array[Value] = Array::new(capacity=total_count)
   values.push(Value::Int64(first_value))
   let mut previous = first_value
   let mut produced = 1
@@ -672,7 +698,7 @@ fn decode_delta_binary_packed_int64_values(
       produced += values_to_take
     }
   }
-  (values, offset - original_start)
+  offset - original_start
 }
 
 ///|
@@ -746,6 +772,25 @@ fn decode_plain_boolean_values(
     values.push(Value::Boolean(bit == 1))
   }
   (values, ceil_div(count, 8))
+}
+
+///|
+fn decode_plain_boolean_values_into(
+  target : Array[Value],
+  data : Bytes,
+  start : Int,
+  count : Int,
+) -> Int raise ParquetError {
+  for index in 0..<count {
+    let byte_index = start + index / 8
+    let bit_index = index % 8
+    if byte_index >= data.length() {
+      invalid_data("Unexpected end of buffer while reading BOOLEAN values")
+    }
+    let bit = (data[byte_index].to_int() >> bit_index) & 1
+    target.push(Value::Boolean(bit == 1))
+  }
+  ceil_div(count, 8)
 }
 
 ///|
@@ -838,6 +883,75 @@ fn decode_plain_values(
 }
 
 ///|
+fn decode_plain_values_into(
+  target : Array[Value],
+  data : Bytes,
+  start : Int,
+  column : LeafColumnMeta,
+  count : Int,
+) -> Int raise ParquetError {
+  if column.column_type == Boolean {
+    return decode_plain_boolean_values_into(target, data, start, count)
+  }
+  let mut offset = start
+  match column.column_type {
+    Boolean => ()
+    Int32 =>
+      for _ in 0..<count {
+        target.push(Value::Int32(read_i32_le(data, offset)))
+        offset += 4
+      }
+    Int64 =>
+      for _ in 0..<count {
+        target.push(Value::Int64(read_i64_le(data, offset)))
+        offset += 8
+      }
+    TimestampMicros =>
+      for _ in 0..<count {
+        target.push(Value::TimestampMicros(read_int96_micros(data, offset)))
+        offset += 12
+      }
+    Float =>
+      for _ in 0..<count {
+        target.push(Value::Float(read_f32_le(data, offset)))
+        offset += 4
+      }
+    Double =>
+      for _ in 0..<count {
+        target.push(Value::Double(read_f64_le(data, offset)))
+        offset += 8
+      }
+    String =>
+      for _ in 0..<count {
+        let len = read_u32_le(data, offset)
+        offset += 4
+        target.push(
+          Value::String(
+            bytes_to_utf8_string(data.view(start=offset, end=offset + len)),
+          ),
+        )
+        offset += len
+      }
+    Binary =>
+      for _ in 0..<count {
+        let len = match column.fixed_length {
+          Some(value) => value
+          None => {
+            let byte_len = read_u32_le(data, offset)
+            offset += 4
+            byte_len
+          }
+        }
+        target.push(
+          Value::Binary(data.view(start=offset, end=offset + len).to_bytes()),
+        )
+        offset += len
+      }
+  }
+  offset - start
+}
+
+///|
 fn decode_non_null_values(
   data : Bytes,
   start : Int,
@@ -906,5 +1020,77 @@ fn decode_non_null_values(
   } else {
     unsupported("Unsupported parquet encoding: \{encoding}")
     ([], 0)
+  }
+}
+
+///|
+fn decode_non_null_values_into(
+  target : Array[Value],
+  data : Bytes,
+  start : Int,
+  encoding : Int,
+  column : LeafColumnMeta,
+  count : Int,
+  dictionary : Array[Value]?,
+) -> Int raise ParquetError {
+  if count == 0 {
+    return 0
+  }
+  if encoding == encoding_plain_dictionary ||
+    encoding == encoding_rle_dictionary {
+    match dictionary {
+      Some(dictionary_values) => {
+        let (indices, consumed) = decode_dictionary_indices(data, start, count)
+        for index in indices {
+          match dictionary_values.get(index) {
+            Some(value) => target.push(value)
+            None => invalid_data("Dictionary index out of range")
+          }
+        }
+        return consumed
+      }
+      None => {
+        invalid_data("Dictionary encoded page without dictionary page")
+        return 0
+      }
+    }
+  }
+  if encoding == encoding_plain {
+    decode_plain_values_into(target, data, start, column, count)
+  } else if encoding == encoding_delta_binary_packed {
+    match column.column_type {
+      Int32 =>
+        decode_delta_binary_packed_int32_values_into(target, data, start, count)
+      Int64 =>
+        decode_delta_binary_packed_int64_values_into(target, data, start, count)
+      _ => {
+        unsupported("DELTA_BINARY_PACKED is only valid for INT32/INT64")
+        0
+      }
+    }
+  } else if encoding == encoding_delta_byte_array {
+    match column.column_type {
+      String => {
+        let (values, consumed) = decode_delta_byte_array(data, start, count)
+        for value in values {
+          target.push(Value::String(bytes_to_utf8_string(value[:])))
+        }
+        consumed
+      }
+      Binary => {
+        let (values, consumed) = decode_delta_byte_array(data, start, count)
+        for value in values {
+          target.push(Value::Binary(value))
+        }
+        consumed
+      }
+      _ => {
+        unsupported("DELTA_BYTE_ARRAY is only valid for byte arrays")
+        0
+      }
+    }
+  } else {
+    unsupported("Unsupported parquet encoding: \{encoding}")
+    0
   }
 }
