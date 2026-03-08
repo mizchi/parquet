@@ -1,0 +1,11 @@
+.DS_Store
+_build/
+target/
+target
+.mooncakes/
+.repos/
+.moonagent/
+.git.template-backup/
+.mooncakes.template-backup/
+_build.template-backup/
+target.template-backup

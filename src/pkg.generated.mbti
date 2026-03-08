@@ -1,0 +1,79 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "mizchi/parquet"
+
+// Values
+pub fn new_column(String, ColumnType, Repetition) -> Column
+
+pub fn new_parquet_file(Array[Column], Array[Array[Value]], String?) -> ParquetFile
+
+pub fn read_bytes(Bytes) -> ParquetFile raise ParquetError
+
+pub fn read_file(String) -> ParquetFile raise ParquetError
+
+pub fn write_bytes(ParquetFile) -> Bytes raise ParquetError
+
+pub fn write_file(String, ParquetFile) -> Unit raise ParquetError
+
+// Errors
+pub(all) suberror ParquetError {
+  InvalidData(String)
+  Unsupported(String)
+  Io(String)
+}
+pub impl Eq for ParquetError
+pub impl Show for ParquetError
+
+// Types and methods
+pub struct Column {
+  name : String
+  column_type : ColumnType
+  repetition : Repetition
+}
+pub fn Column::column_type(Self) -> ColumnType
+pub fn Column::name(Self) -> String
+pub fn Column::repetition(Self) -> Repetition
+pub impl Eq for Column
+pub impl Show for Column
+
+pub(all) enum ColumnType {
+  Int32
+  Int64
+  String
+  Binary
+}
+pub impl Eq for ColumnType
+pub impl Show for ColumnType
+
+pub struct ParquetFile {
+  columns : Array[Column]
+  rows : Array[Array[Value]]
+  created_by : String?
+}
+pub fn ParquetFile::columns(Self) -> Array[Column]
+pub fn ParquetFile::created_by(Self) -> String?
+pub fn ParquetFile::rows(Self) -> Array[Array[Value]]
+pub impl Eq for ParquetFile
+pub impl Show for ParquetFile
+
+pub(all) enum Repetition {
+  Required
+  Optional
+  Repeated
+}
+pub impl Eq for Repetition
+pub impl Show for Repetition
+
+pub(all) enum Value {
+  Int32(Int)
+  Int64(Int64)
+  String(String)
+  Binary(Bytes)
+  Null
+}
+pub impl Eq for Value
+pub impl Show for Value
+
+// Type aliases
+
+// Traits
+
