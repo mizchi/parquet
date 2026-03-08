@@ -57,7 +57,7 @@ fn encode_rle_levels(
   }
   let out = ByteSink::new()
   out.push_u32_le(body.length())
-  out.push_bytes(body.to_bytes())
+  out.push_bytes(body.to_bytes()[:])
   out.to_bytes()
 }
 
@@ -102,11 +102,11 @@ fn encode_plain_non_null_values(
       (String, Value::String(v)) => {
         let bytes = string_to_bytes(v)
         sink.push_u32_le(bytes.length())
-        sink.push_bytes(bytes)
+        sink.push_bytes(bytes[:])
       }
       (Binary, Value::Binary(v)) => {
         sink.push_u32_le(v.length())
-        sink.push_bytes(v)
+        sink.push_bytes(v[:])
       }
       (TimestampMicros, _) =>
         unsupported(
@@ -190,7 +190,7 @@ fn encode_parquet(file : ParquetFile) -> Bytes raise ParquetError {
     let values = collect_column_values(file, column_index)
     let page = encode_data_page(values, column)
     let page_offset = offset
-    body.push_bytes(page)
+    body.push_bytes(page[:])
     offset += page.length()
     column_chunks.push({
       file_offset: 0L,
@@ -224,7 +224,7 @@ fn encode_parquet(file : ParquetFile) -> Bytes raise ParquetError {
   root.write_string_field(4, "schema")
   root.write_i32_field(5, file.columns.length())
   root.end_struct()
-  footer.sink.push_bytes(root.write_bytes())
+  footer.sink.push_bytes(root.write_bytes()[:])
   for column in file.columns {
     let element = CompactWriter::new()
     element.begin_struct()
@@ -242,7 +242,7 @@ fn encode_parquet(file : ParquetFile) -> Bytes raise ParquetError {
       element.write_i32_field(6, converted_type_utf8)
     }
     element.end_struct()
-    footer.sink.push_bytes(element.write_bytes())
+    footer.sink.push_bytes(element.write_bytes()[:])
   }
   footer.write_i64_field(3, file.rows.length().to_int64())
   footer.write_field_header(4, thrift_wire_list)
@@ -270,7 +270,7 @@ fn encode_parquet(file : ParquetFile) -> Bytes raise ParquetError {
     chunk_writer.write_i64_field(9, chunk.meta_data.data_page_offset)
     chunk_writer.end_struct()
     chunk_writer.end_struct()
-    row_group_writer.sink.push_bytes(chunk_writer.write_bytes())
+    row_group_writer.sink.push_bytes(chunk_writer.write_bytes()[:])
   }
   row_group_writer.write_i64_field(2, row_group.total_byte_size)
   row_group_writer.write_i64_field(3, row_group.num_rows)
@@ -280,7 +280,7 @@ fn encode_parquet(file : ParquetFile) -> Bytes raise ParquetError {
     row_group.total_compressed_size.unwrap_or(0L),
   )
   row_group_writer.end_struct()
-  footer.sink.push_bytes(row_group_writer.write_bytes())
+  footer.sink.push_bytes(row_group_writer.write_bytes()[:])
   footer.write_string_field(6, "mizchi/parquet")
   footer.end_struct()
   let footer_bytes = footer.write_bytes()
@@ -289,8 +289,8 @@ fn encode_parquet(file : ParquetFile) -> Bytes raise ParquetError {
   file_bytes.push_byte(parquet_magic_1)
   file_bytes.push_byte(parquet_magic_2)
   file_bytes.push_byte(parquet_magic_3)
-  file_bytes.push_bytes(body.to_bytes())
-  file_bytes.push_bytes(footer_bytes)
+  file_bytes.push_bytes(body.to_bytes()[:])
+  file_bytes.push_bytes(footer_bytes[:])
   file_bytes.push_u32_le(footer_bytes.length())
   file_bytes.push_byte(parquet_magic_0)
   file_bytes.push_byte(parquet_magic_1)

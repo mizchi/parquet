@@ -306,7 +306,7 @@ fn ByteSink::push_byte(self : ByteSink, value : Byte) -> Unit {
 }
 
 ///|
-fn ByteSink::push_bytes(self : ByteSink, value : Bytes) -> Unit {
+fn ByteSink::push_bytes(self : ByteSink, value : BytesView) -> Unit {
   for byte in value {
     self.buf.push(byte)
   }
@@ -356,14 +356,14 @@ fn ByteSink::push_zigzag_i64(self : ByteSink, value : Int64) -> Unit {
 }
 
 ///|
-fn ByteSink::push_binary(self : ByteSink, value : Bytes) -> Unit {
+fn ByteSink::push_binary(self : ByteSink, value : BytesView) -> Unit {
   self.push_varint(value.length().to_uint64())
   self.push_bytes(value)
 }
 
 ///|
 fn ByteSink::push_string(self : ByteSink, value : String) -> Unit {
-  self.push_binary(string_to_bytes(value))
+  self.push_binary(string_to_bytes(value)[:])
 }
 
 ///|

@@ -72,23 +72,29 @@ fn read_partial_u64_le(data : Bytes, start : Int) -> UInt64 {
 }
 
 ///|
-fn unpack_lsb_bitpacked(
+fn append_lsb_bitpacked_ints(
+  values : Array[Int],
   data : Bytes,
   start : Int,
   bit_width : Int,
   count : Int,
-) -> Array[UInt64] {
-  if bit_width == 0 {
-    return Array::make(count, UInt64::default())
+) -> Unit {
+  if count == 0 {
+    return
   }
-  let values : Array[UInt64] = Array::new(capacity=count)
+  if bit_width == 0 {
+    for _ in 0..<count {
+      values.push(0)
+    }
+    return
+  }
   if bit_width == 64 {
     let mut offset = start
     for _ in 0..<count {
-      values.push(data.unsafe_read_uint64_le(offset))
+      values.push(data.unsafe_read_uint64_le(offset).to_int())
       offset += 8
     }
-    return values
+    return
   }
   let mask = bit_mask_u64(bit_width)
   if bit_width <= 56 {
@@ -101,11 +107,11 @@ fn unpack_lsb_bitpacked(
         bits_in_buffer += 8
         offset += 1
       }
-      values.push(bit_buffer & mask)
+      values.push((bit_buffer & mask).to_int())
       bit_buffer = bit_buffer >> bit_width
       bits_in_buffer -= bit_width
     }
-    return values
+    return
   }
   for index in 0..<count {
     let bit_offset = index * bit_width
@@ -120,13 +126,88 @@ fn unpack_lsb_bitpacked(
         UInt64::default()
       }
       values.push(
-        low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift)),
+        (low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))).to_int(),
       )
     } else {
-      values.push(low & mask)
+      values.push((low & mask).to_int())
     }
   }
-  values
+}
+
+///|
+fn append_lsb_bitpacked_deltas(
+  values : Array[Int64],
+  data : Bytes,
+  start : Int,
+  bit_width : Int,
+  count : Int,
+  min_delta : Int64,
+  previous : Int64,
+) -> Int64 {
+  let mut current = previous
+  if count == 0 {
+    return current
+  }
+  if bit_width == 0 {
+    for _ in 0..<count {
+      current = i64_add_wrapping(current, min_delta)
+      values.push(current)
+    }
+    return current
+  }
+  if bit_width == 64 {
+    let mut offset = start
+    for _ in 0..<count {
+      let delta = i64_add_u64_wrapping(
+        min_delta,
+        data.unsafe_read_uint64_le(offset),
+      )
+      current = i64_add_wrapping(current, delta)
+      values.push(current)
+      offset += 8
+    }
+    return current
+  }
+  let mask = bit_mask_u64(bit_width)
+  if bit_width <= 56 {
+    let mut offset = start
+    let mut bit_buffer = UInt64::default()
+    let mut bits_in_buffer = 0
+    for _ in 0..<count {
+      while bits_in_buffer < bit_width {
+        bit_buffer = bit_buffer | (data[offset].to_uint64() << bits_in_buffer)
+        bits_in_buffer += 8
+        offset += 1
+      }
+      let delta = i64_add_u64_wrapping(min_delta, bit_buffer & mask)
+      current = i64_add_wrapping(current, delta)
+      values.push(current)
+      bit_buffer = bit_buffer >> bit_width
+      bits_in_buffer -= bit_width
+    }
+    return current
+  }
+  for index in 0..<count {
+    let bit_offset = index * bit_width
+    let byte_index = start + bit_offset / 8
+    let shift = bit_offset % 8
+    let low = read_partial_u64_le(data, byte_index) >> shift
+    let spill_bits = shift + bit_width - 64
+    let unpacked = if spill_bits > 0 {
+      let high_byte = if byte_index + 8 < data.length() {
+        data[byte_index + 8].to_uint64()
+      } else {
+        UInt64::default()
+      }
+      low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
+    } else {
+      low & mask
+    }
+    let delta = i64_add_u64_wrapping(min_delta, unpacked)
+    current = i64_add_wrapping(current, delta)
+    values.push(current)
+  }
+  current
 }
 
 ///|
@@ -169,16 +250,13 @@ fn decode_rle_hybrid_range(
       let groups = header >> 1
       let group_values = groups * 8
       let byte_len = ceil_div(group_values * bit_width, 8)
-      let unpacked = unpack_lsb_bitpacked(data, offset, bit_width, group_values)
-      offset += byte_len
       let values_to_take = if count - values.length() < group_values {
         count - values.length()
       } else {
         group_values
       }
-      for index in 0..<values_to_take {
-        values.push(unpacked[index].to_int())
-      }
+      append_lsb_bitpacked_ints(values, data, offset, bit_width, values_to_take)
+      offset += byte_len
     }
   }
   (values, offset - start)
@@ -228,34 +306,34 @@ fn decode_delta_binary_packed(
   let mut previous = first_value
   while values.length() < total_count {
     let min_delta = reader.read_i64()
-    let bit_widths : Array[Int] = Array::new(capacity=miniblock_count)
-    for _ in 0..<miniblock_count {
-      bit_widths.push(reader.read_byte().to_int())
-    }
+    reader.ensure(miniblock_count)
+    let bit_widths = reader.data.view(
+      start=reader.offset,
+      end=reader.offset + miniblock_count,
+    )
+    reader.offset += miniblock_count
     for miniblock_index in 0..<miniblock_count {
       let remaining = total_count - values.length()
       if remaining <= 0 {
         break
       }
-      let bit_width = bit_widths[miniblock_index]
+      let bit_width = bit_widths[miniblock_index].to_int()
       let byte_len = ceil_div(values_per_miniblock * bit_width, 8)
-      let unpacked = unpack_lsb_bitpacked(
-        reader.data,
-        reader.offset,
-        bit_width,
-        values_per_miniblock,
-      )
-      reader.offset += byte_len
       let values_to_take = if remaining < values_per_miniblock {
         remaining
       } else {
         values_per_miniblock
       }
-      for index in 0..<values_to_take {
-        let delta = i64_add_u64_wrapping(min_delta, unpacked[index])
-        previous = i64_add_wrapping(previous, delta)
-        values.push(previous)
-      }
+      previous = append_lsb_bitpacked_deltas(
+        values,
+        reader.data,
+        reader.offset,
+        bit_width,
+        values_to_take,
+        min_delta,
+        previous,
+      )
+      reader.offset += byte_len
     }
   }
   (values, reader.offset - start)
@@ -440,7 +518,7 @@ fn decode_non_null_values(
     match dictionary {
       Some(dictionary_values) => {
         let (indices, consumed) = decode_dictionary_indices(data, start, count)
-        let decoded : Array[Value] = []
+        let decoded : Array[Value] = Array::new(capacity=count)
         for index in indices {
           match dictionary_values.get(index) {
             Some(value) => decoded.push(value)
@@ -461,7 +539,7 @@ fn decode_non_null_values(
     match column.column_type {
       Int32 => {
         let (values, consumed) = decode_delta_binary_packed(data, start)
-        let decoded : Array[Value] = []
+        let decoded : Array[Value] = Array::new(capacity=count)
         for index in 0..<count {
           decoded.push(Value::Int32(values[index].to_int()))
         }
@@ -469,7 +547,7 @@ fn decode_non_null_values(
       }
       Int64 => {
         let (values, consumed) = decode_delta_binary_packed(data, start)
-        let decoded : Array[Value] = []
+        let decoded : Array[Value] = Array::new(capacity=count)
         for index in 0..<count {
           decoded.push(Value::Int64(values[index]))
         }
@@ -484,7 +562,7 @@ fn decode_non_null_values(
     match column.column_type {
       String => {
         let (values, consumed) = decode_delta_byte_array(data, start, count)
-        let decoded : Array[Value] = []
+        let decoded : Array[Value] = Array::new(capacity=count)
         for value in values {
           decoded.push(Value::String(bytes_to_utf8_string(value[:])))
         }
@@ -492,7 +570,7 @@ fn decode_non_null_values(
       }
       Binary => {
         let (values, consumed) = decode_delta_byte_array(data, start, count)
-        let decoded : Array[Value] = []
+        let decoded : Array[Value] = Array::new(capacity=count)
         for value in values {
           decoded.push(Value::Binary(value))
         }
