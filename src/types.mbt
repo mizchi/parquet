@@ -3,6 +3,7 @@ pub(all) enum ColumnType {
   Boolean
   Int32
   Int64
+  TimestampMicros
   Float
   Double
   String
@@ -21,6 +22,7 @@ pub(all) enum Value {
   Boolean(Bool)
   Int32(Int)
   Int64(Int64)
+  TimestampMicros(Int64)
   Float(Float)
   Double(Double)
   String(String)

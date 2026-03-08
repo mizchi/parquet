@@ -173,7 +173,8 @@ fn decode_dictionary_page(
   header : DictionaryPageHeaderMeta,
   column : LeafColumnMeta,
 ) -> Array[Value] raise ParquetError {
-  if header.encoding != encoding_plain {
+  if header.encoding != encoding_plain &&
+    header.encoding != encoding_plain_dictionary {
     unsupported("Only PLAIN dictionary pages are supported right now")
   }
   let (values, _) = decode_plain_values(
@@ -191,9 +192,6 @@ fn decode_column_chunk(
   chunk : ColumnChunkMeta,
   column : LeafColumnMeta,
 ) -> Array[Value] raise ParquetError {
-  if chunk.meta_data.codec != codec_uncompressed {
-    unsupported("Only UNCOMPRESSED parquet pages are supported right now")
-  }
   let mut offset = chunk.meta_data.dictionary_page_offset
     .unwrap_or(chunk.meta_data.data_page_offset)
     .to_int()
@@ -204,16 +202,35 @@ fn decode_column_chunk(
     let (page_header, page_header_len) = read_page_header(data, offset)
     let payload_offset = offset + page_header_len
     if page_header.page_type == page_type_data_page {
+      let payload = if chunk.meta_data.codec == codec_uncompressed {
+        data
+      } else {
+        decompress_page_payload(
+          data,
+          payload_offset,
+          page_header.compressed_page_size,
+          page_header.uncompressed_page_size,
+          chunk.meta_data.codec,
+        )
+      }
+      let page_data_offset = if chunk.meta_data.codec == codec_uncompressed {
+        payload_offset
+      } else {
+        0
+      }
       match page_header.data_page {
         Some(data_page) =>
           values.append(
             decode_data_page_v1(
-              data, payload_offset, data_page, column, dictionary,
+              payload, page_data_offset, data_page, column, dictionary,
             ),
           )
         None => invalid_data("DATA_PAGE without data_page_header")
       }
     } else if page_header.page_type == page_type_data_page_v2 {
+      if chunk.meta_data.codec != codec_uncompressed {
+        unsupported("Compressed DATA_PAGE_V2 is not supported right now")
+      }
       match page_header.data_page_v2 {
         Some(data_page_v2) =>
           values.append(
@@ -224,11 +241,27 @@ fn decode_column_chunk(
         None => invalid_data("DATA_PAGE_V2 without data_page_header_v2")
       }
     } else if page_header.page_type == page_type_dictionary_page {
+      let payload = if chunk.meta_data.codec == codec_uncompressed {
+        data
+      } else {
+        decompress_page_payload(
+          data,
+          payload_offset,
+          page_header.compressed_page_size,
+          page_header.uncompressed_page_size,
+          chunk.meta_data.codec,
+        )
+      }
+      let page_data_offset = if chunk.meta_data.codec == codec_uncompressed {
+        payload_offset
+      } else {
+        0
+      }
       match page_header.dictionary_page {
         Some(dictionary_header) =>
           dictionary = Some(
             decode_dictionary_page(
-              data, payload_offset, dictionary_header, column,
+              payload, page_data_offset, dictionary_header, column,
             ),
           )
         None => invalid_data("DICTIONARY_PAGE without dictionary_page_header")

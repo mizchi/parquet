@@ -385,6 +385,7 @@ fn read_page_header(
   (
     {
       page_type,
+      uncompressed_page_size,
       compressed_page_size,
       data_page,
       data_page_v2,
@@ -415,7 +416,7 @@ fn to_column_type(
   } else if type_code == parquet_type_int64 {
     Int64
   } else if type_code == parquet_type_int96 {
-    Binary
+    TimestampMicros
   } else if type_code == parquet_type_float {
     Float
   } else if type_code == parquet_type_double {

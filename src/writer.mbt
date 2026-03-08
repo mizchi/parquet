@@ -76,6 +76,12 @@ fn writer_type_code(column_type : ColumnType) -> Int raise ParquetError {
     Int64 => parquet_type_int64
     String => parquet_type_byte_array
     Binary => parquet_type_byte_array
+    TimestampMicros => {
+      unsupported(
+        "TIMESTAMP_MICROS columns are not supported by the writer yet",
+      )
+      0
+    }
     _ => {
       unsupported("This column type is not supported by the writer yet")
       0
@@ -102,6 +108,10 @@ fn encode_plain_non_null_values(
         sink.push_u32_le(v.length())
         sink.push_bytes(v)
       }
+      (TimestampMicros, _) =>
+        unsupported(
+          "TIMESTAMP_MICROS columns are not supported by the writer yet",
+        )
       (Boolean, _) =>
         unsupported("BOOLEAN columns are not supported by the writer yet")
       (Float, _) =>

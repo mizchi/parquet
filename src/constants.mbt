@@ -68,6 +68,9 @@ let encoding_rle_dictionary = 8
 let codec_uncompressed = 0
 
 ///|
+let codec_snappy = 1
+
+///|
 let page_type_data_page = 0
 
 ///|

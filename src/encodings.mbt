@@ -41,6 +41,15 @@ fn read_f64_le(data : Bytes, start : Int) -> Double raise ParquetError {
 }
 
 ///|
+fn read_int96_micros(data : Bytes, start : Int) -> Int64 raise ParquetError {
+  let nanos_of_day = read_i64_le(data, start)
+  let julian_day = read_u32_le(data, start + 8).to_int64()
+  let day_micros = (julian_day - 2440588L) * 86400000000L
+  let micros_of_day = nanos_of_day / 1000L
+  day_micros + micros_of_day
+}
+
+///|
 fn unpack_lsb_bitpacked(
   data : Bytes,
   start : Int,
@@ -294,6 +303,11 @@ fn decode_plain_values(
       for _ in 0..<count {
         values.push(Value::Int64(read_i64_le(data, offset)))
         offset += 8
+      }
+    TimestampMicros =>
+      for _ in 0..<count {
+        values.push(Value::TimestampMicros(read_int96_micros(data, offset)))
+        offset += 12
       }
     Float =>
       for _ in 0..<count {

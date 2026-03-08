@@ -39,6 +39,24 @@ test "read fixed length byte array benchmark" (b : @bench.T) {
 }
 
 ///|
+test "read alltypes plain benchmark" (b : @bench.T) {
+  let data = read_bench_fixture("alltypes_plain.parquet")
+  b.bench(() => ignore(try! read_bytes(data)))
+}
+
+///|
+test "read alltypes dictionary benchmark" (b : @bench.T) {
+  let data = read_bench_fixture("alltypes_dictionary.parquet")
+  b.bench(() => ignore(try! read_bytes(data)))
+}
+
+///|
+test "read int96 from spark benchmark" (b : @bench.T) {
+  let data = read_bench_fixture("int96_from_spark.parquet")
+  b.bench(() => ignore(try! read_bytes(data)))
+}
+
+///|
 test "write flat parquet benchmark" (b : @bench.T) {
   let file = sample_flat_file()
   b.bench(() => ignore(try! write_bytes(file)))

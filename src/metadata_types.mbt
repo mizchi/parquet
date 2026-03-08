@@ -60,6 +60,7 @@ priv struct DataPageHeaderV2Meta {
 ///|
 priv struct PageHeaderMeta {
   page_type : Int
+  uncompressed_page_size : Int
   compressed_page_size : Int
   data_page : DataPageHeaderMeta?
   data_page_v2 : DataPageHeaderV2Meta?

@@ -54,6 +54,7 @@ fn value_to_cell(value : @parquet.Value) -> String {
     @parquet.Value::Null => ""
     @parquet.Value::Int32(v) => v.to_string()
     @parquet.Value::Int64(v) => v.to_string()
+    @parquet.Value::TimestampMicros(v) => v.to_string()
     @parquet.Value::Boolean(v) => v.to_string()
     @parquet.Value::Float(v) => v.to_string()
     @parquet.Value::Double(v) => v.to_string()
@@ -102,6 +103,104 @@ fn bytes_to_hex(bytes : Bytes) -> String {
     )
   }
   out.to_string()
+}
+
+///|
+fn read_parquet_fixture(name : String) -> @parquet.ParquetFile raise {
+  @parquet.read_bytes(read_fixture(name)) catch {
+    err => {
+      println(err)
+      raise err
+    }
+  }
+}
+
+///|
+fn assert_timestamp_micros(
+  value : @parquet.Value,
+  expected : Int64,
+) -> Unit raise {
+  match value {
+    @parquet.Value::TimestampMicros(v) => assert_eq(v, expected)
+    _ => assert_true(false)
+  }
+}
+
+///|
+fn assert_text_value(value : @parquet.Value, expected : String) -> Unit raise {
+  match value {
+    @parquet.Value::String(v) => assert_eq(v, expected)
+    @parquet.Value::Binary(v) => assert_eq(@utf8.decode_lossy(v[:]), expected)
+    _ => assert_true(false)
+  }
+}
+
+///|
+fn assert_row_shape(
+  row : Array[@parquet.Value],
+  expected_id : Int,
+  expected_bool : Bool,
+  expected_date : String,
+  expected_string : String,
+  expected_timestamp_micros : Int64,
+) -> Unit raise {
+  assert_eq(row.length(), 11)
+  match row[0] {
+    @parquet.Value::Int32(v) => assert_eq(v, expected_id)
+    _ => assert_true(false)
+  }
+  match row[1] {
+    @parquet.Value::Boolean(v) => assert_eq(v, expected_bool)
+    _ => assert_true(false)
+  }
+  match row[2] {
+    @parquet.Value::Int32(v) => assert_eq(v, expected_id % 2)
+    _ => assert_true(false)
+  }
+  match row[3] {
+    @parquet.Value::Int32(v) => assert_eq(v, expected_id % 2)
+    _ => assert_true(false)
+  }
+  match row[4] {
+    @parquet.Value::Int32(v) => assert_eq(v, expected_id % 2)
+    _ => assert_true(false)
+  }
+  match row[5] {
+    @parquet.Value::Int64(v) =>
+      assert_eq(v, if expected_id % 2 == 0 { 0L } else { 10L })
+    _ => assert_true(false)
+  }
+  match row[6] {
+    @parquet.Value::Float(v) =>
+      assert_eq(
+        v.reinterpret_as_uint(),
+        if expected_id % 2 == 0 {
+          0
+        } else {
+          0x3F8CCCCD
+        },
+      )
+    _ => assert_true(false)
+  }
+  match row[7] {
+    @parquet.Value::Double(v) =>
+      assert_eq(
+        v.reinterpret_as_uint64(),
+        if expected_id % 2 == 0 {
+          0L.reinterpret_as_uint64()
+        } else {
+          4621875412584313651L.reinterpret_as_uint64()
+        },
+      )
+    _ => assert_true(false)
+  }
+  match row[8] {
+    value => assert_text_value(value, expected_date)
+  }
+  match row[9] {
+    value => assert_text_value(value, expected_string)
+  }
+  assert_timestamp_micros(row[10], expected_timestamp_micros)
 }
 
 ///|
@@ -225,6 +324,52 @@ test "reads fixed length byte array fixture" {
   assert_eq(values[9], "000003DE")
   assert_eq(values[10], "000003DD")
   assert_eq(values[11], "000003DC")
+}
+
+///|
+test "reads int96 from spark fixture" {
+  let file = try! read_parquet_fixture("int96_from_spark.parquet")
+  assert_eq(file.columns().length(), 1)
+  assert_eq(file.columns()[0].name(), "a")
+  assert_eq(file.columns()[0].column_type(), @parquet.TimestampMicros)
+  assert_eq(file.rows().length(), 6)
+  assert_timestamp_micros(file.rows()[0][0], 1704141296123456L)
+  assert_timestamp_micros(file.rows()[1][0], 1704070800000000L)
+  assert_timestamp_micros(file.rows()[2][0], 253402225200000000L)
+  assert_timestamp_micros(file.rows()[3][0], 1735599600000000L)
+  assert_eq(file.rows()[4][0], @parquet.Value::Null)
+  assert_timestamp_micros(file.rows()[5][0], 9089380393200000000L)
+}
+
+///|
+test "reads alltypes plain fixture" {
+  let file = try! read_parquet_fixture("alltypes_plain.parquet")
+  assert_eq(file.columns().length(), 11)
+  assert_eq(file.rows().length(), 8)
+  assert_eq(file.columns()[0].name(), "id")
+  assert_eq(file.columns()[0].column_type(), @parquet.Int32)
+  assert_eq(file.columns()[1].name(), "bool_col")
+  assert_eq(file.columns()[1].column_type(), @parquet.Boolean)
+  assert_eq(file.columns()[6].name(), "float_col")
+  assert_eq(file.columns()[6].column_type(), @parquet.Float)
+  assert_eq(file.columns()[7].name(), "double_col")
+  assert_eq(file.columns()[7].column_type(), @parquet.Double)
+  assert_eq(file.columns()[10].name(), "timestamp_col")
+  assert_eq(file.columns()[10].column_type(), @parquet.TimestampMicros)
+  assert_row_shape(file.rows()[0], 4, true, "03/01/09", "0", 1235865600000000L)
+  assert_row_shape(file.rows()[1], 5, false, "03/01/09", "1", 1235865660000000L)
+  assert_row_shape(file.rows()[6], 0, true, "01/01/09", "0", 1230768000000000L)
+  assert_row_shape(file.rows()[7], 1, false, "01/01/09", "1", 1230768060000000L)
+}
+
+///|
+test "reads alltypes dictionary fixture" {
+  let file = try! read_parquet_fixture("alltypes_dictionary.parquet")
+  assert_eq(file.columns().length(), 11)
+  assert_eq(file.rows().length(), 2)
+  assert_eq(file.columns()[10].column_type(), @parquet.TimestampMicros)
+  assert_row_shape(file.rows()[0], 0, true, "01/01/09", "0", 1230768000000000L)
+  assert_row_shape(file.rows()[1], 1, false, "01/01/09", "1", 1230768060000000L)
 }
 
 ///|
