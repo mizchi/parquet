@@ -60,12 +60,15 @@ pub(all) enum ParquetColumnData {
   Int32Values(Array[Int])
   NullableInt32Values(Array[Int?])
   Int64Values(Array[Int64])
+  NullableInt64Values(Array[Int64?])
   TimestampMicrosValues(Array[Int64])
+  NullableTimestampMicrosValues(Array[Int64?])
   FloatValues(Array[Float])
   DoubleValues(Array[Double])
   Utf8Values(Array[Bytes])
   NullableUtf8Values(Array[Bytes?])
   BinaryValues(Array[Bytes])
+  NullableBinaryValues(Array[Bytes?])
 }
 pub fn ParquetColumnData::length(Self) -> Int
 pub impl Eq for ParquetColumnData

@@ -120,6 +120,65 @@ fn count_boolean_levels_range_non_null(
 }
 
 ///|
+fn boolean_levels_range_all_max(
+  data : Bytes,
+  start : Int,
+  end : Int,
+  max_level : Int,
+  count : Int,
+) -> Bool raise ParquetError {
+  let mut offset = start
+  let mut produced = 0
+  while produced < count && offset < end {
+    let (header, header_len) = read_varint32_at(data, offset)
+    offset += header_len
+    if (header & 1) == 0 {
+      let run_len = header >> 1
+      let repeated = data[offset].to_int() & 1
+      offset += 1
+      if repeated != max_level {
+        return false
+      }
+      let values_to_take = if count - produced < run_len {
+        count - produced
+      } else {
+        run_len
+      }
+      produced += values_to_take
+    } else {
+      let groups = header >> 1
+      let group_values = groups * 8
+      let values_to_take = if count - produced < group_values {
+        count - produced
+      } else {
+        group_values
+      }
+      let mut run_index = 0
+      for byte_offset in 0..<groups {
+        if run_index >= values_to_take {
+          break
+        }
+        let packed = data[offset + byte_offset].to_int()
+        let remaining = values_to_take - run_index
+        let bits_to_take = if remaining < 8 { remaining } else { 8 }
+        let full_mask = if bits_to_take == 8 {
+          0xff
+        } else {
+          (1 << bits_to_take) - 1
+        }
+        if (packed & full_mask) != full_mask {
+          return false
+        }
+        run_index += bits_to_take
+      }
+      offset += groups
+      produced += values_to_take
+    }
+  }
+  produced == count
+}
+
+///|
 fn count_levels_range_non_null(
   data : Bytes,
   start : Int,
@@ -200,6 +259,86 @@ fn count_levels_range_non_null(
     }
   }
   non_null_count
+}
+
+///|
+fn levels_range_all_max(
+  data : Bytes,
+  start : Int,
+  end : Int,
+  max_level : Int,
+  count : Int,
+) -> Bool raise ParquetError {
+  if max_level == 0 {
+    return true
+  }
+  let bit_width = bit_width(max_level)
+  if bit_width == 1 {
+    return boolean_levels_range_all_max(data, start, end, max_level, count)
+  }
+  let mut offset = start
+  let mut produced = 0
+  let mask = bit_mask_u64(bit_width)
+  while produced < count && offset < end {
+    let (header, header_len) = read_varint32_at(data, offset)
+    offset += header_len
+    if (header & 1) == 0 {
+      let run_len = header >> 1
+      let byte_width = ceil_div(bit_width, 8)
+      let mut repeated = 0
+      for i in 0..<byte_width {
+        repeated = repeated | (data[offset + i].to_int() << (i * 8))
+      }
+      offset += byte_width
+      if repeated != max_level {
+        return false
+      }
+      let values_to_take = if count - produced < run_len {
+        count - produced
+      } else {
+        run_len
+      }
+      produced += values_to_take
+    } else {
+      let groups = header >> 1
+      let group_values = groups * 8
+      let byte_len = ceil_div(group_values * bit_width, 8)
+      let values_to_take = if count - produced < group_values {
+        count - produced
+      } else {
+        group_values
+      }
+      let mut byte_index = offset
+      let mut shift = 0
+      for _ in 0..<values_to_take {
+        let low = if byte_index + 8 <= data.length() {
+          data.unsafe_read_uint64_le(byte_index) >> shift
+        } else {
+          read_partial_u64_le(data, byte_index) >> shift
+        }
+        let spill_bits = shift + bit_width - 64
+        let unpacked = if spill_bits > 0 {
+          let high_byte = if byte_index + 8 < data.length() {
+            data[byte_index + 8].to_uint64()
+          } else {
+            UInt64::default()
+          }
+          low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
+        } else {
+          low & mask
+        }
+        if unpacked.to_int() != max_level {
+          return false
+        }
+        let next_shift = shift + bit_width
+        byte_index += next_shift >> 3
+        shift = next_shift & 7
+      }
+      offset += byte_len
+      produced += values_to_take
+    }
+  }
+  produced == count
 }
 
 ///|
@@ -1498,6 +1637,45 @@ fn decode_dictionary_page(
 }
 
 ///|
+fn decode_dictionary_page_bytes(
+  data : Bytes,
+  payload_offset : Int,
+  header : DictionaryPageHeaderMeta,
+  column : LeafColumnMeta,
+) -> Array[Bytes] raise ParquetError {
+  if header.encoding != encoding_plain &&
+    header.encoding != encoding_plain_dictionary {
+    unsupported("Only PLAIN dictionary pages are supported right now")
+  }
+  let values : Array[Bytes] = Array::new(capacity=header.num_values)
+  let mut offset = payload_offset
+  match column.column_type {
+    String =>
+      for _ in 0..<header.num_values {
+        let len = read_u32_le(data, offset)
+        offset += 4
+        values.push(data.view(start=offset, end=offset + len).to_bytes())
+        offset += len
+      }
+    Binary =>
+      for _ in 0..<header.num_values {
+        let len = match column.fixed_length {
+          Some(value) => value
+          None => {
+            let byte_len = read_u32_le(data, offset)
+            offset += 4
+            byte_len
+          }
+        }
+        values.push(data.view(start=offset, end=offset + len).to_bytes())
+        offset += len
+      }
+    _ => unsupported("Only BYTE_ARRAY dictionary pages are supported here")
+  }
+  values
+}
+
+///|
 fn value_to_int32(value : Value) -> Int raise ParquetError {
   match value {
     Int32(v) => v
@@ -1530,9 +1708,23 @@ fn decode_required_utf8_values_into(
   start : Int,
   encoding : Int,
   count : Int,
+  dictionary : Array[Bytes]?,
 ) -> Int raise ParquetError {
   if count == 0 {
     return 0
+  }
+  if encoding == encoding_plain_dictionary ||
+    encoding == encoding_rle_dictionary {
+    return match dictionary {
+      Some(dictionary_values) =>
+        decode_dictionary_typed_values_into(
+          target, data, start, count, dictionary_values,
+        )
+      None => {
+        invalid_data("Dictionary encoded page without dictionary page")
+        0
+      }
+    }
   }
   if encoding == encoding_plain {
     let mut offset = start
@@ -1559,9 +1751,23 @@ fn decode_required_binary_values_into(
   encoding : Int,
   column : LeafColumnMeta,
   count : Int,
+  dictionary : Array[Bytes]?,
 ) -> Int raise ParquetError {
   if count == 0 {
     return 0
+  }
+  if encoding == encoding_plain_dictionary ||
+    encoding == encoding_rle_dictionary {
+    return match dictionary {
+      Some(dictionary_values) =>
+        decode_dictionary_typed_values_into(
+          target, data, start, count, dictionary_values,
+        )
+      None => {
+        invalid_data("Dictionary encoded page without dictionary page")
+        0
+      }
+    }
   }
   if encoding == encoding_plain {
     let mut offset = start
@@ -1640,9 +1846,21 @@ fn decode_required_int64_values_into(
 ) -> Int raise ParquetError {
   if encoding == encoding_plain {
     let mut offset = start
-    for _ in 0..<count {
-      target.push(read_i64_le(data, offset))
-      offset += 8
+    match column_type {
+      Int64 =>
+        for _ in 0..<count {
+          target.push(read_i64_le(data, offset))
+          offset += 8
+        }
+      TimestampMicros =>
+        for _ in 0..<count {
+          target.push(read_int96_micros(data, offset))
+          offset += 12
+        }
+      _ => {
+        unsupported("Unsupported required INT64-like column type")
+        return 0
+      }
     }
     return offset - start
   }
@@ -1716,14 +1934,13 @@ fn decode_required_int32_column_chunk(
           }
           let value_offset = definition_offset + definition_len
           if column.max_definition_level > 0 {
-            let non_null_count = count_levels_range_non_null(
-              payload,
-              definition_offset + 4,
-              value_offset,
-              column.max_definition_level,
-              data_page.num_values,
-            )
-            if non_null_count != data_page.num_values {
+            if !levels_range_all_max(
+                payload,
+                definition_offset + 4,
+                value_offset,
+                column.max_definition_level,
+                data_page.num_values,
+              ) {
               unsupported("Nullable INT32 column contains nulls")
             }
           }
@@ -1780,14 +1997,13 @@ fn decode_required_int32_column_chunk(
               data_page_v2.repetition_levels_byte_length
             let definition_end = definition_offset +
               data_page_v2.definition_levels_byte_length
-            let non_null_count = count_levels_range_non_null(
-              data,
-              definition_offset,
-              definition_end,
-              column.max_definition_level,
-              data_page_v2.num_values,
-            )
-            if non_null_count != data_page_v2.num_values {
+            if !levels_range_all_max(
+                data,
+                definition_offset,
+                definition_end,
+                column.max_definition_level,
+                data_page_v2.num_values,
+              ) {
               unsupported("Nullable INT32 column contains nulls")
             }
           }
@@ -1886,14 +2102,13 @@ fn decode_required_int64_column_chunk(
           }
           let value_offset = definition_offset + definition_len
           if column.max_definition_level > 0 {
-            let non_null_count = count_levels_range_non_null(
-              payload,
-              definition_offset + 4,
-              value_offset,
-              column.max_definition_level,
-              data_page.num_values,
-            )
-            if non_null_count != data_page.num_values {
+            if !levels_range_all_max(
+                payload,
+                definition_offset + 4,
+                value_offset,
+                column.max_definition_level,
+                data_page.num_values,
+              ) {
               unsupported("Nullable INT64 column contains nulls")
             }
           }
@@ -1951,14 +2166,13 @@ fn decode_required_int64_column_chunk(
               data_page_v2.repetition_levels_byte_length
             let definition_end = definition_offset +
               data_page_v2.definition_levels_byte_length
-            let non_null_count = count_levels_range_non_null(
-              data,
-              definition_offset,
-              definition_end,
-              column.max_definition_level,
-              data_page_v2.num_values,
-            )
-            if non_null_count != data_page_v2.num_values {
+            if !levels_range_all_max(
+                data,
+                definition_offset,
+                definition_end,
+                column.max_definition_level,
+                data_page_v2.num_values,
+              ) {
               unsupported("Nullable INT64 column contains nulls")
             }
           }
@@ -2019,14 +2233,12 @@ fn decode_required_utf8_column_chunk(
   chunk : ColumnChunkMeta,
   column : LeafColumnMeta,
 ) -> Array[Bytes] raise ParquetError {
-  if column.max_definition_level > 0 {
-    unsupported("Nullable UTF-8 columns are not supported in typed mode yet")
-  }
   let mut offset = chunk.meta_data.dictionary_page_offset
     .unwrap_or(chunk.meta_data.data_page_offset)
     .to_int()
   let target_values = chunk.meta_data.num_values.to_int()
   let values : Array[Bytes] = Array::new(capacity=target_values)
+  let mut dictionary : Array[Bytes]? = None
   while values.length() < target_values {
     let (page_header, page_header_len) = read_page_header(data, offset)
     let payload_offset = offset + page_header_len
@@ -2060,14 +2272,13 @@ fn decode_required_utf8_column_chunk(
           }
           let value_offset = definition_offset + definition_len
           if column.max_definition_level > 0 {
-            let non_null_count = count_levels_range_non_null(
-              payload,
-              definition_offset + 4,
-              value_offset,
-              column.max_definition_level,
-              data_page.num_values,
-            )
-            if non_null_count != data_page.num_values {
+            if !levels_range_all_max(
+                payload,
+                definition_offset + 4,
+                value_offset,
+                column.max_definition_level,
+                data_page.num_values,
+              ) {
               unsupported("Nullable UTF-8 column contains nulls")
             }
           }
@@ -2078,6 +2289,7 @@ fn decode_required_utf8_column_chunk(
               value_offset,
               data_page.encoding,
               data_page.num_values,
+              dictionary,
             ),
           )
         }
@@ -2123,14 +2335,13 @@ fn decode_required_utf8_column_chunk(
               data_page_v2.repetition_levels_byte_length
             let definition_end = definition_offset +
               data_page_v2.definition_levels_byte_length
-            let non_null_count = count_levels_range_non_null(
-              data,
-              definition_offset,
-              definition_end,
-              column.max_definition_level,
-              data_page_v2.num_values,
-            )
-            if non_null_count != data_page_v2.num_values {
+            if !levels_range_all_max(
+                data,
+                definition_offset,
+                definition_end,
+                column.max_definition_level,
+                data_page_v2.num_values,
+              ) {
               unsupported("Nullable UTF-8 column contains nulls")
             }
           }
@@ -2141,15 +2352,38 @@ fn decode_required_utf8_column_chunk(
               value_data_offset,
               data_page_v2.encoding,
               data_page_v2.num_values,
+              dictionary,
             ),
           )
         }
         None => invalid_data("DATA_PAGE_V2 without data_page_header_v2")
       }
     } else if page_header.page_type == page_type_dictionary_page {
-      unsupported(
-        "Dictionary UTF-8 columns are not supported in typed mode yet",
-      )
+      let payload = if chunk.meta_data.codec == codec_uncompressed {
+        data
+      } else {
+        decompress_page_payload(
+          data,
+          payload_offset,
+          page_header.compressed_page_size,
+          page_header.uncompressed_page_size,
+          chunk.meta_data.codec,
+        )
+      }
+      let page_data_offset = if chunk.meta_data.codec == codec_uncompressed {
+        payload_offset
+      } else {
+        0
+      }
+      match page_header.dictionary_page {
+        Some(dictionary_header) =>
+          dictionary = Some(
+            decode_dictionary_page_bytes(
+              payload, page_data_offset, dictionary_header, column,
+            ),
+          )
+        None => invalid_data("DICTIONARY_PAGE without dictionary_page_header")
+      }
     } else {
       unsupported("Unsupported page type: \{page_header.page_type}")
     }
@@ -2167,14 +2401,12 @@ fn decode_required_binary_column_chunk(
   chunk : ColumnChunkMeta,
   column : LeafColumnMeta,
 ) -> Array[Bytes] raise ParquetError {
-  if column.max_definition_level > 0 {
-    unsupported("Nullable binary columns are not supported in typed mode yet")
-  }
   let mut offset = chunk.meta_data.dictionary_page_offset
     .unwrap_or(chunk.meta_data.data_page_offset)
     .to_int()
   let target_values = chunk.meta_data.num_values.to_int()
   let values : Array[Bytes] = Array::new(capacity=target_values)
+  let mut dictionary : Array[Bytes]? = None
   while values.length() < target_values {
     let (page_header, page_header_len) = read_page_header(data, offset)
     let payload_offset = offset + page_header_len
@@ -2208,14 +2440,13 @@ fn decode_required_binary_column_chunk(
           }
           let value_offset = definition_offset + definition_len
           if column.max_definition_level > 0 {
-            let non_null_count = count_levels_range_non_null(
-              payload,
-              definition_offset + 4,
-              value_offset,
-              column.max_definition_level,
-              data_page.num_values,
-            )
-            if non_null_count != data_page.num_values {
+            if !levels_range_all_max(
+                payload,
+                definition_offset + 4,
+                value_offset,
+                column.max_definition_level,
+                data_page.num_values,
+              ) {
               unsupported("Nullable binary column contains nulls")
             }
           }
@@ -2227,6 +2458,7 @@ fn decode_required_binary_column_chunk(
               data_page.encoding,
               column,
               data_page.num_values,
+              dictionary,
             ),
           )
         }
@@ -2272,14 +2504,13 @@ fn decode_required_binary_column_chunk(
               data_page_v2.repetition_levels_byte_length
             let definition_end = definition_offset +
               data_page_v2.definition_levels_byte_length
-            let non_null_count = count_levels_range_non_null(
-              data,
-              definition_offset,
-              definition_end,
-              column.max_definition_level,
-              data_page_v2.num_values,
-            )
-            if non_null_count != data_page_v2.num_values {
+            if !levels_range_all_max(
+                data,
+                definition_offset,
+                definition_end,
+                column.max_definition_level,
+                data_page_v2.num_values,
+              ) {
               unsupported("Nullable binary column contains nulls")
             }
           }
@@ -2291,15 +2522,38 @@ fn decode_required_binary_column_chunk(
               data_page_v2.encoding,
               column,
               data_page_v2.num_values,
+              dictionary,
             ),
           )
         }
         None => invalid_data("DATA_PAGE_V2 without data_page_header_v2")
       }
     } else if page_header.page_type == page_type_dictionary_page {
-      unsupported(
-        "Dictionary binary columns are not supported in typed mode yet",
-      )
+      let payload = if chunk.meta_data.codec == codec_uncompressed {
+        data
+      } else {
+        decompress_page_payload(
+          data,
+          payload_offset,
+          page_header.compressed_page_size,
+          page_header.uncompressed_page_size,
+          chunk.meta_data.codec,
+        )
+      }
+      let page_data_offset = if chunk.meta_data.codec == codec_uncompressed {
+        payload_offset
+      } else {
+        0
+      }
+      match page_header.dictionary_page {
+        Some(dictionary_header) =>
+          dictionary = Some(
+            decode_dictionary_page_bytes(
+              payload, page_data_offset, dictionary_header, column,
+            ),
+          )
+        None => invalid_data("DICTIONARY_PAGE without dictionary_page_header")
+      }
     } else {
       unsupported("Unsupported page type: \{page_header.page_type}")
     }
@@ -2532,6 +2786,7 @@ fn decode_optional_utf8_column_chunk(
     .to_int()
   let target_values = chunk.meta_data.num_values.to_int()
   let values : Array[Bytes?] = Array::new(capacity=target_values)
+  let mut dictionary : Array[Bytes]? = None
   while values.length() < target_values {
     let (page_header, page_header_len) = read_page_header(data, offset)
     let payload_offset = offset + page_header_len
@@ -2585,6 +2840,7 @@ fn decode_optional_utf8_column_chunk(
                 value_offset,
                 data_page.encoding,
                 non_null_count,
+                dictionary,
               ),
             )
           }
@@ -2666,6 +2922,7 @@ fn decode_optional_utf8_column_chunk(
                 value_data_offset,
                 data_page_v2.encoding,
                 non_null_count,
+                dictionary,
               ),
             )
           }
@@ -2692,9 +2949,31 @@ fn decode_optional_utf8_column_chunk(
         None => invalid_data("DATA_PAGE_V2 without data_page_header_v2")
       }
     } else if page_header.page_type == page_type_dictionary_page {
-      unsupported(
-        "Dictionary UTF-8 columns are not supported in typed mode yet",
-      )
+      let payload = if chunk.meta_data.codec == codec_uncompressed {
+        data
+      } else {
+        decompress_page_payload(
+          data,
+          payload_offset,
+          page_header.compressed_page_size,
+          page_header.uncompressed_page_size,
+          chunk.meta_data.codec,
+        )
+      }
+      let page_data_offset = if chunk.meta_data.codec == codec_uncompressed {
+        payload_offset
+      } else {
+        0
+      }
+      match page_header.dictionary_page {
+        Some(dictionary_header) =>
+          dictionary = Some(
+            decode_dictionary_page_bytes(
+              payload, page_data_offset, dictionary_header, column,
+            ),
+          )
+        None => invalid_data("DICTIONARY_PAGE without dictionary_page_header")
+      }
     } else {
       unsupported("Unsupported page type: \{page_header.page_type}")
     }
@@ -2707,6 +2986,529 @@ fn decode_optional_utf8_column_chunk(
 }
 
 ///|
+fn decode_optional_int64_column_chunk(
+  data : Bytes,
+  chunk : ColumnChunkMeta,
+  column : LeafColumnMeta,
+) -> Array[Int64?] raise ParquetError {
+  let mut offset = chunk.meta_data.dictionary_page_offset
+    .unwrap_or(chunk.meta_data.data_page_offset)
+    .to_int()
+  let target_values = chunk.meta_data.num_values.to_int()
+  let values : Array[Int64?] = Array::new(capacity=target_values)
+  let mut dictionary : Array[Value]? = None
+  while values.length() < target_values {
+    let (page_header, page_header_len) = read_page_header(data, offset)
+    let payload_offset = offset + page_header_len
+    if page_header.page_type == page_type_data_page {
+      let payload = if chunk.meta_data.codec == codec_uncompressed {
+        data
+      } else {
+        decompress_page_payload(
+          data,
+          payload_offset,
+          page_header.compressed_page_size,
+          page_header.uncompressed_page_size,
+          chunk.meta_data.codec,
+        )
+      }
+      let page_data_offset = if chunk.meta_data.codec == codec_uncompressed {
+        payload_offset
+      } else {
+        0
+      }
+      match page_header.data_page {
+        Some(data_page) => {
+          if column.max_repetition_level > 0 {
+            unsupported("Repeated columns are not supported yet")
+          }
+          let definition_offset = page_data_offset
+          let definition_data_offset = definition_offset + 4
+          let definition_len = if column.max_definition_level == 0 {
+            0
+          } else {
+            4 + read_u32_le(payload, definition_offset)
+          }
+          let value_offset = definition_offset + definition_len
+          let non_null_count = if column.max_definition_level == 0 {
+            data_page.num_values
+          } else {
+            count_levels_range_non_null(
+              payload,
+              definition_data_offset,
+              value_offset,
+              column.max_definition_level,
+              data_page.num_values,
+            )
+          }
+          let dense : Array[Int64] = Array::new(capacity=non_null_count)
+          if non_null_count > 0 {
+            ignore(
+              decode_required_int64_values_into(
+                dense,
+                payload,
+                value_offset,
+                data_page.encoding,
+                column.column_type,
+                non_null_count,
+                dictionary,
+              ),
+            )
+          }
+          if non_null_count == 0 {
+            push_none_values(values, data_page.num_values)
+          } else if column.max_definition_level == 0 {
+            for value in dense {
+              values.push(Some(value))
+            }
+          } else {
+            append_optional_option_values_from_levels_range(
+              values,
+              payload,
+              definition_data_offset,
+              value_offset,
+              column.max_definition_level,
+              data_page.num_values,
+              dense,
+              non_null_count,
+            )
+          }
+        }
+        None => invalid_data("DATA_PAGE without data_page_header")
+      }
+    } else if page_header.page_type == page_type_data_page_v2 {
+      match page_header.data_page_v2 {
+        Some(data_page_v2) => {
+          let definition_offset = payload_offset +
+            data_page_v2.repetition_levels_byte_length
+          let definition_end = definition_offset +
+            data_page_v2.definition_levels_byte_length
+          let value_offset = definition_end
+          let compressed_value_len = page_header.compressed_page_size -
+            data_page_v2.repetition_levels_byte_length -
+            data_page_v2.definition_levels_byte_length
+          let uncompressed_value_len = page_header.uncompressed_page_size -
+            data_page_v2.repetition_levels_byte_length -
+            data_page_v2.definition_levels_byte_length
+          let (value_data, value_data_offset) = if data_page_v2.is_compressed &&
+            chunk.meta_data.codec != codec_uncompressed {
+            if compressed_value_len == 0 {
+              (Bytes::default(), 0)
+            } else {
+              (
+                decompress_page_payload(
+                  data,
+                  value_offset,
+                  compressed_value_len,
+                  uncompressed_value_len,
+                  chunk.meta_data.codec,
+                ),
+                0,
+              )
+            }
+          } else {
+            (data, value_offset)
+          }
+          if column.max_repetition_level > 0 {
+            unsupported("Repeated columns are not supported yet")
+          }
+          let non_null_count = if column.max_definition_level == 0 ||
+            data_page_v2.definition_levels_byte_length == 0 {
+            data_page_v2.num_values
+          } else {
+            count_levels_range_non_null(
+              data,
+              definition_offset,
+              definition_end,
+              column.max_definition_level,
+              data_page_v2.num_values,
+            )
+          }
+          let dense : Array[Int64] = Array::new(capacity=non_null_count)
+          if non_null_count > 0 {
+            ignore(
+              decode_required_int64_values_into(
+                dense,
+                value_data,
+                value_data_offset,
+                data_page_v2.encoding,
+                column.column_type,
+                non_null_count,
+                dictionary,
+              ),
+            )
+          }
+          if non_null_count == 0 {
+            push_none_values(values, data_page_v2.num_values)
+          } else if column.max_definition_level == 0 ||
+            data_page_v2.definition_levels_byte_length == 0 {
+            for value in dense {
+              values.push(Some(value))
+            }
+          } else {
+            append_optional_option_values_from_levels_range(
+              values,
+              data,
+              definition_offset,
+              definition_end,
+              column.max_definition_level,
+              data_page_v2.num_values,
+              dense,
+              non_null_count,
+            )
+          }
+        }
+        None => invalid_data("DATA_PAGE_V2 without data_page_header_v2")
+      }
+    } else if page_header.page_type == page_type_dictionary_page {
+      let payload = if chunk.meta_data.codec == codec_uncompressed {
+        data
+      } else {
+        decompress_page_payload(
+          data,
+          payload_offset,
+          page_header.compressed_page_size,
+          page_header.uncompressed_page_size,
+          chunk.meta_data.codec,
+        )
+      }
+      let page_data_offset = if chunk.meta_data.codec == codec_uncompressed {
+        payload_offset
+      } else {
+        0
+      }
+      match page_header.dictionary_page {
+        Some(dictionary_header) =>
+          dictionary = Some(
+            decode_dictionary_page(
+              payload, page_data_offset, dictionary_header, column,
+            ),
+          )
+        None => invalid_data("DICTIONARY_PAGE without dictionary_page_header")
+      }
+    } else {
+      unsupported("Unsupported page type: \{page_header.page_type}")
+    }
+    offset = payload_offset + page_header.compressed_page_size
+  }
+  if values.length() != target_values {
+    invalid_data("Decoded value count does not match column metadata")
+  }
+  values
+}
+
+///|
+fn decode_optional_binary_column_chunk(
+  data : Bytes,
+  chunk : ColumnChunkMeta,
+  column : LeafColumnMeta,
+) -> Array[Bytes?] raise ParquetError {
+  let mut offset = chunk.meta_data.dictionary_page_offset
+    .unwrap_or(chunk.meta_data.data_page_offset)
+    .to_int()
+  let target_values = chunk.meta_data.num_values.to_int()
+  let values : Array[Bytes?] = Array::new(capacity=target_values)
+  let mut dictionary : Array[Bytes]? = None
+  while values.length() < target_values {
+    let (page_header, page_header_len) = read_page_header(data, offset)
+    let payload_offset = offset + page_header_len
+    if page_header.page_type == page_type_data_page {
+      let payload = if chunk.meta_data.codec == codec_uncompressed {
+        data
+      } else {
+        decompress_page_payload(
+          data,
+          payload_offset,
+          page_header.compressed_page_size,
+          page_header.uncompressed_page_size,
+          chunk.meta_data.codec,
+        )
+      }
+      let page_data_offset = if chunk.meta_data.codec == codec_uncompressed {
+        payload_offset
+      } else {
+        0
+      }
+      match page_header.data_page {
+        Some(data_page) => {
+          if column.max_repetition_level > 0 {
+            unsupported("Repeated columns are not supported yet")
+          }
+          let definition_offset = page_data_offset
+          let definition_data_offset = definition_offset + 4
+          let definition_len = if column.max_definition_level == 0 {
+            0
+          } else {
+            4 + read_u32_le(payload, definition_offset)
+          }
+          let value_offset = definition_offset + definition_len
+          let non_null_count = if column.max_definition_level == 0 {
+            data_page.num_values
+          } else {
+            count_levels_range_non_null(
+              payload,
+              definition_data_offset,
+              value_offset,
+              column.max_definition_level,
+              data_page.num_values,
+            )
+          }
+          let dense : Array[Bytes] = Array::new(capacity=non_null_count)
+          if non_null_count > 0 {
+            ignore(
+              decode_required_binary_values_into(
+                dense,
+                payload,
+                value_offset,
+                data_page.encoding,
+                column,
+                non_null_count,
+                dictionary,
+              ),
+            )
+          }
+          if non_null_count == 0 {
+            push_none_values(values, data_page.num_values)
+          } else if column.max_definition_level == 0 {
+            for value in dense {
+              values.push(Some(value))
+            }
+          } else {
+            append_optional_option_values_from_levels_range(
+              values,
+              payload,
+              definition_data_offset,
+              value_offset,
+              column.max_definition_level,
+              data_page.num_values,
+              dense,
+              non_null_count,
+            )
+          }
+        }
+        None => invalid_data("DATA_PAGE without data_page_header")
+      }
+    } else if page_header.page_type == page_type_data_page_v2 {
+      match page_header.data_page_v2 {
+        Some(data_page_v2) => {
+          let definition_offset = payload_offset +
+            data_page_v2.repetition_levels_byte_length
+          let definition_end = definition_offset +
+            data_page_v2.definition_levels_byte_length
+          let value_offset = definition_end
+          let compressed_value_len = page_header.compressed_page_size -
+            data_page_v2.repetition_levels_byte_length -
+            data_page_v2.definition_levels_byte_length
+          let uncompressed_value_len = page_header.uncompressed_page_size -
+            data_page_v2.repetition_levels_byte_length -
+            data_page_v2.definition_levels_byte_length
+          let (value_data, value_data_offset) = if data_page_v2.is_compressed &&
+            chunk.meta_data.codec != codec_uncompressed {
+            if compressed_value_len == 0 {
+              (Bytes::default(), 0)
+            } else {
+              (
+                decompress_page_payload(
+                  data,
+                  value_offset,
+                  compressed_value_len,
+                  uncompressed_value_len,
+                  chunk.meta_data.codec,
+                ),
+                0,
+              )
+            }
+          } else {
+            (data, value_offset)
+          }
+          if column.max_repetition_level > 0 {
+            unsupported("Repeated columns are not supported yet")
+          }
+          let non_null_count = if column.max_definition_level == 0 ||
+            data_page_v2.definition_levels_byte_length == 0 {
+            data_page_v2.num_values
+          } else {
+            count_levels_range_non_null(
+              data,
+              definition_offset,
+              definition_end,
+              column.max_definition_level,
+              data_page_v2.num_values,
+            )
+          }
+          let dense : Array[Bytes] = Array::new(capacity=non_null_count)
+          if non_null_count > 0 {
+            ignore(
+              decode_required_binary_values_into(
+                dense,
+                value_data,
+                value_data_offset,
+                data_page_v2.encoding,
+                column,
+                non_null_count,
+                dictionary,
+              ),
+            )
+          }
+          if non_null_count == 0 {
+            push_none_values(values, data_page_v2.num_values)
+          } else if column.max_definition_level == 0 ||
+            data_page_v2.definition_levels_byte_length == 0 {
+            for value in dense {
+              values.push(Some(value))
+            }
+          } else {
+            append_optional_option_values_from_levels_range(
+              values,
+              data,
+              definition_offset,
+              definition_end,
+              column.max_definition_level,
+              data_page_v2.num_values,
+              dense,
+              non_null_count,
+            )
+          }
+        }
+        None => invalid_data("DATA_PAGE_V2 without data_page_header_v2")
+      }
+    } else if page_header.page_type == page_type_dictionary_page {
+      let payload = if chunk.meta_data.codec == codec_uncompressed {
+        data
+      } else {
+        decompress_page_payload(
+          data,
+          payload_offset,
+          page_header.compressed_page_size,
+          page_header.uncompressed_page_size,
+          chunk.meta_data.codec,
+        )
+      }
+      let page_data_offset = if chunk.meta_data.codec == codec_uncompressed {
+        payload_offset
+      } else {
+        0
+      }
+      match page_header.dictionary_page {
+        Some(dictionary_header) =>
+          dictionary = Some(
+            decode_dictionary_page_bytes(
+              payload, page_data_offset, dictionary_header, column,
+            ),
+          )
+        None => invalid_data("DICTIONARY_PAGE without dictionary_page_header")
+      }
+    } else {
+      unsupported("Unsupported page type: \{page_header.page_type}")
+    }
+    offset = payload_offset + page_header.compressed_page_size
+  }
+  if values.length() != target_values {
+    invalid_data("Decoded value count does not match column metadata")
+  }
+  values
+}
+
+///|
+fn decode_int32_column_chunk_data(
+  data : Bytes,
+  chunk : ColumnChunkMeta,
+  column : LeafColumnMeta,
+) -> ParquetColumnData raise ParquetError {
+  if column.max_definition_level == 0 {
+    return Int32Values(decode_required_int32_column_chunk(data, chunk, column))
+  }
+  let values = decode_required_int32_column_chunk(data, chunk, column) catch {
+    ParquetError::Unsupported(_) =>
+      return NullableInt32Values(
+        decode_optional_int32_column_chunk(data, chunk, column),
+      )
+    err => raise err
+  }
+  Int32Values(values)
+}
+
+///|
+fn decode_int64_column_chunk_data(
+  data : Bytes,
+  chunk : ColumnChunkMeta,
+  column : LeafColumnMeta,
+) -> ParquetColumnData raise ParquetError {
+  if column.max_definition_level == 0 {
+    return Int64Values(decode_required_int64_column_chunk(data, chunk, column))
+  }
+  let values = decode_required_int64_column_chunk(data, chunk, column) catch {
+    ParquetError::Unsupported(_) =>
+      return NullableInt64Values(
+        decode_optional_int64_column_chunk(data, chunk, column),
+      )
+    err => raise err
+  }
+  Int64Values(values)
+}
+
+///|
+fn decode_timestamp_micros_column_chunk_data(
+  data : Bytes,
+  chunk : ColumnChunkMeta,
+  column : LeafColumnMeta,
+) -> ParquetColumnData raise ParquetError {
+  if column.max_definition_level == 0 {
+    return TimestampMicrosValues(
+      decode_required_int64_column_chunk(data, chunk, column),
+    )
+  }
+  let values = decode_required_int64_column_chunk(data, chunk, column) catch {
+    ParquetError::Unsupported(_) =>
+      return NullableTimestampMicrosValues(
+        decode_optional_int64_column_chunk(data, chunk, column),
+      )
+    err => raise err
+  }
+  TimestampMicrosValues(values)
+}
+
+///|
+fn decode_utf8_column_chunk_data(
+  data : Bytes,
+  chunk : ColumnChunkMeta,
+  column : LeafColumnMeta,
+) -> ParquetColumnData raise ParquetError {
+  if column.max_definition_level == 0 {
+    return Utf8Values(decode_required_utf8_column_chunk(data, chunk, column))
+  }
+  let values = decode_required_utf8_column_chunk(data, chunk, column) catch {
+    ParquetError::Unsupported(_) =>
+      return NullableUtf8Values(
+        decode_optional_utf8_column_chunk(data, chunk, column),
+      )
+    err => raise err
+  }
+  Utf8Values(values)
+}
+
+///|
+fn decode_binary_column_chunk_data(
+  data : Bytes,
+  chunk : ColumnChunkMeta,
+  column : LeafColumnMeta,
+) -> ParquetColumnData raise ParquetError {
+  if column.max_definition_level == 0 {
+    return BinaryValues(
+      decode_required_binary_column_chunk(data, chunk, column),
+    )
+  }
+  let values = decode_required_binary_column_chunk(data, chunk, column) catch {
+    ParquetError::Unsupported(_) =>
+      return NullableBinaryValues(
+        decode_optional_binary_column_chunk(data, chunk, column),
+      )
+    err => raise err
+  }
+  BinaryValues(values)
+}
+
+///|
 fn decode_column_chunk_columnar(
   data : Bytes,
   chunk : ColumnChunkMeta,
@@ -2716,43 +3518,12 @@ fn decode_column_chunk_columnar(
     return Values(decode_column_chunk(data, chunk, column))
   }
   match column.column_type {
-    Int32 =>
-      if column.max_definition_level == 0 {
-        Int32Values(decode_required_int32_column_chunk(data, chunk, column))
-      } else {
-        NullableInt32Values(
-          decode_optional_int32_column_chunk(data, chunk, column),
-        )
-      }
-    Int64 =>
-      Int64Values(decode_required_int64_column_chunk(data, chunk, column))
+    Int32 => decode_int32_column_chunk_data(data, chunk, column)
+    Int64 => decode_int64_column_chunk_data(data, chunk, column)
     TimestampMicros =>
-      TimestampMicrosValues(
-        decode_required_int64_column_chunk(data, chunk, column),
-      )
-    String =>
-      if not(chunk.meta_data.encodings.contains(encoding_plain_dictionary)) &&
-        not(chunk.meta_data.encodings.contains(encoding_rle_dictionary)) &&
-        column.max_definition_level == 0 {
-        Utf8Values(decode_required_utf8_column_chunk(data, chunk, column))
-      } else if not(
-          chunk.meta_data.encodings.contains(encoding_plain_dictionary),
-        ) &&
-        not(chunk.meta_data.encodings.contains(encoding_rle_dictionary)) {
-        NullableUtf8Values(
-          decode_optional_utf8_column_chunk(data, chunk, column),
-        )
-      } else {
-        Values(decode_column_chunk(data, chunk, column))
-      }
-    Binary =>
-      if column.max_definition_level == 0 &&
-        not(chunk.meta_data.encodings.contains(encoding_plain_dictionary)) &&
-        not(chunk.meta_data.encodings.contains(encoding_rle_dictionary)) {
-        BinaryValues(decode_required_binary_column_chunk(data, chunk, column))
-      } else {
-        Values(decode_column_chunk(data, chunk, column))
-      }
+      decode_timestamp_micros_column_chunk_data(data, chunk, column)
+    String => decode_utf8_column_chunk_data(data, chunk, column)
+    Binary => decode_binary_column_chunk_data(data, chunk, column)
     _ => Values(decode_column_chunk(data, chunk, column))
   }
 }
@@ -2949,9 +3720,27 @@ fn append_column_data(
           all_column_data.unsafe_set(column_index, Values(merged))
         }
       }
+    NullableInt64Values(existing) =>
+      match chunk_data {
+        NullableInt64Values(values) => existing.append(values)
+        _ => {
+          let merged = all_column_data[column_index].to_values()
+          merged.append(chunk_data.to_values())
+          all_column_data.unsafe_set(column_index, Values(merged))
+        }
+      }
     TimestampMicrosValues(existing) =>
       match chunk_data {
         TimestampMicrosValues(values) => existing.append(values)
+        _ => {
+          let merged = all_column_data[column_index].to_values()
+          merged.append(chunk_data.to_values())
+          all_column_data.unsafe_set(column_index, Values(merged))
+        }
+      }
+    NullableTimestampMicrosValues(existing) =>
+      match chunk_data {
+        NullableTimestampMicrosValues(values) => existing.append(values)
         _ => {
           let merged = all_column_data[column_index].to_values()
           merged.append(chunk_data.to_values())
@@ -2997,6 +3786,15 @@ fn append_column_data(
     BinaryValues(existing) =>
       match chunk_data {
         BinaryValues(values) => existing.append(values)
+        _ => {
+          let merged = all_column_data[column_index].to_values()
+          merged.append(chunk_data.to_values())
+          all_column_data.unsafe_set(column_index, Values(merged))
+        }
+      }
+    NullableBinaryValues(existing) =>
+      match chunk_data {
+        NullableBinaryValues(values) => existing.append(values)
         _ => {
           let merged = all_column_data[column_index].to_values()
           merged.append(chunk_data.to_values())

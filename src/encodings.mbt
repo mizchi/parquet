@@ -1588,11 +1588,11 @@ fn DictionaryValueCursor::fill_run(
 }
 
 ///|
-fn DictionaryValueCursor::append_into(
+fn[T] DictionaryValueCursor::append_typed_into(
   self : DictionaryValueCursor,
-  target : Array[Value],
+  target : Array[T],
   count : Int,
-  dictionary_values : Array[Value],
+  dictionary_values : Array[T],
 ) -> Unit raise ParquetError {
   if count == 0 {
     return
@@ -1662,6 +1662,16 @@ fn DictionaryValueCursor::append_into(
 }
 
 ///|
+fn DictionaryValueCursor::append_into(
+  self : DictionaryValueCursor,
+  target : Array[Value],
+  count : Int,
+  dictionary_values : Array[Value],
+) -> Unit raise ParquetError {
+  self.append_typed_into(target, count, dictionary_values)
+}
+
+///|
 fn decode_dictionary_values(
   data : Bytes,
   start : Int,
@@ -1685,6 +1695,19 @@ fn decode_dictionary_values_into(
 ) -> Int raise ParquetError {
   let cursor = DictionaryValueCursor::new(data, start)
   cursor.append_into(target, count, dictionary_values)
+  cursor.offset - start
+}
+
+///|
+fn[T] decode_dictionary_typed_values_into(
+  target : Array[T],
+  data : Bytes,
+  start : Int,
+  count : Int,
+  dictionary_values : Array[T],
+) -> Int raise ParquetError {
+  let cursor = DictionaryValueCursor::new(data, start)
+  cursor.append_typed_into(target, count, dictionary_values)
   cursor.offset - start
 }
 

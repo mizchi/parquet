@@ -89,6 +89,14 @@ test "streams optional dictionary values for boolean definition levels" {
 }
 
 ///|
+test "detects all-defined boolean definition levels" {
+  assert_true(try! levels_range_all_max(bytes_from_ints([3, 0xFF]), 0, 2, 1, 8))
+  assert_false(
+    try! levels_range_all_max(bytes_from_ints([3, 0xEF]), 0, 2, 1, 8),
+  )
+}
+
+///|
 test "streams optional dictionary values for multi-bit definition levels" {
   let target : Array[Value] = []
   let dictionary_values : Array[Value] = [
@@ -119,6 +127,16 @@ test "streams optional dictionary values for multi-bit definition levels" {
     Value::String("zero"),
     Value::Null,
   ])
+}
+
+///|
+test "detects all-defined multi-bit definition levels" {
+  assert_true(
+    try! levels_range_all_max(bytes_from_ints([3, 0xAA, 0xAA]), 0, 3, 2, 8),
+  )
+  assert_false(
+    try! levels_range_all_max(bytes_from_ints([3, 0x8A, 0x29]), 0, 3, 2, 8),
+  )
 }
 
 ///|

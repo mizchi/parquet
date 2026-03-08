@@ -37,12 +37,15 @@ pub(all) enum ParquetColumnData {
   Int32Values(Array[Int])
   NullableInt32Values(Array[Int?])
   Int64Values(Array[Int64])
+  NullableInt64Values(Array[Int64?])
   TimestampMicrosValues(Array[Int64])
+  NullableTimestampMicrosValues(Array[Int64?])
   FloatValues(Array[Float])
   DoubleValues(Array[Double])
   Utf8Values(Array[Bytes])
   NullableUtf8Values(Array[Bytes?])
   BinaryValues(Array[Bytes])
+  NullableBinaryValues(Array[Bytes?])
 } derive(Show, Eq)
 
 ///|
@@ -53,12 +56,15 @@ pub fn ParquetColumnData::length(self : ParquetColumnData) -> Int {
     Int32Values(values) => values.length()
     NullableInt32Values(values) => values.length()
     Int64Values(values) => values.length()
+    NullableInt64Values(values) => values.length()
     TimestampMicrosValues(values) => values.length()
+    NullableTimestampMicrosValues(values) => values.length()
     FloatValues(values) => values.length()
     DoubleValues(values) => values.length()
     Utf8Values(values) => values.length()
     NullableUtf8Values(values) => values.length()
     BinaryValues(values) => values.length()
+    NullableBinaryValues(values) => values.length()
   }
 }
 
@@ -74,7 +80,17 @@ fn ParquetColumnData::value_at(self : ParquetColumnData, index : Int) -> Value {
         None => Value::Null
       }
     Int64Values(values) => Value::Int64(values[index])
+    NullableInt64Values(values) =>
+      match values[index] {
+        Some(value) => Value::Int64(value)
+        None => Value::Null
+      }
     TimestampMicrosValues(values) => Value::TimestampMicros(values[index])
+    NullableTimestampMicrosValues(values) =>
+      match values[index] {
+        Some(value) => Value::TimestampMicros(value)
+        None => Value::Null
+      }
     FloatValues(values) => Value::Float(values[index])
     DoubleValues(values) => Value::Double(values[index])
     Utf8Values(values) => Value::String(bytes_to_utf8_string(values[index][:]))
@@ -84,6 +100,11 @@ fn ParquetColumnData::value_at(self : ParquetColumnData, index : Int) -> Value {
         None => Value::Null
       }
     BinaryValues(values) => Value::Binary(values[index])
+    NullableBinaryValues(values) =>
+      match values[index] {
+        Some(value) => Value::Binary(value)
+        None => Value::Null
+      }
   }
 }
 

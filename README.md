@@ -35,13 +35,13 @@ Comparison table from `just bench-compare-all`:
 
 | benchmark | moon(js) | moon(wasm-gc) | moon(native) | rust |
 |---|---:|---:|---:|---:|
-| read delta binary packed benchmark | 556.04 us | 208.60 us | 870.22 us | 111.03 us |
-| read int32 null pages benchmark | 23.05 us | 12.64 us | 65.69 us | 5.54 us |
-| read fixed length byte array benchmark | 51.52 us | 16.75 us | 84.41 us | unsupported |
-| read alltypes plain benchmark | 19.02 us | 11.41 us | 44.90 us | 13.81 us |
-| read alltypes dictionary benchmark | 16.84 us | 10.79 us | 41.95 us | 13.11 us |
-| read int96 from spark benchmark | 7.13 us | 2.63 us | 11.35 us | 2.55 us |
-| read empty snappy datapage v2 benchmark | 3.41 us | 1.71 us | 6.29 us | 1.99 us |
+| read delta binary packed benchmark | 512.22 us | 127.01 us | 645.99 us | 203.85 us |
+| read int32 null pages benchmark | 17.34 us | 10.85 us | 43.60 us | 7.61 us |
+| read fixed length byte array benchmark | 87.17 us | 10.41 us | 54.68 us | unsupported |
+| read alltypes plain benchmark | 20.49 us | 12.02 us | 45.42 us | 19.57 us |
+| read alltypes dictionary benchmark | 16.83 us | 11.04 us | 42.53 us | 17.31 us |
+| read int96 from spark benchmark | 10.90 us | 3.52 us | 16.19 us | 3.28 us |
+| read empty snappy datapage v2 benchmark | 3.46 us | 1.72 us | 6.27 us | 2.58 us |
 
 Notes:
 

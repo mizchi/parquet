@@ -130,6 +130,11 @@ fn bytes_to_hex(bytes : Bytes) -> String {
 }
 
 ///|
+fn bytes_from_ints(values : Array[Int]) -> Bytes {
+  Bytes::makei(values.length(), fn(index) { values[index].to_byte() })
+}
+
+///|
 fn read_parquet_fixture(name : String) -> @parquet.ParquetFile raise {
   @parquet.read_bytes(read_fixture(name)) catch {
     err => {
@@ -379,6 +384,29 @@ test "reads int96 from spark fixture" {
 }
 
 ///|
+test "reads int96 from spark fixture columnar" {
+  let data = read_fixture("int96_from_spark.parquet")
+  let rows_file = @parquet.read_bytes(data) catch {
+    err => fail(err.to_string())
+  }
+  let columnar = @parquet.read_bytes_columnar(data) catch {
+    err => fail(err.to_string())
+  }
+  try! assert_columnar_matches_rows(columnar, rows_file)
+  match columnar.column_data()[0] {
+    @parquet.NullableTimestampMicrosValues(values) => {
+      assert_eq(values[0], Some(1704141296123456L))
+      assert_eq(values[4], None)
+      assert_eq(values[5], Some(9089380393200000000L))
+    }
+    _ =>
+      fail(
+        "expected nullable timestamp column: \{columnar.column_data()[0].to_string()}",
+      )
+  }
+}
+
+///|
 test "reads alltypes plain fixture" {
   let file = try! read_parquet_fixture("alltypes_plain.parquet")
   assert_eq(file.columns().length(), 11)
@@ -407,6 +435,38 @@ test "reads alltypes dictionary fixture" {
   assert_eq(file.columns()[10].column_type(), @parquet.TimestampMicros)
   assert_row_shape(file.rows()[0], 0, true, "01/01/09", "0", 1230768000000000L)
   assert_row_shape(file.rows()[1], 1, false, "01/01/09", "1", 1230768060000000L)
+}
+
+///|
+test "reads alltypes dictionary fixture columnar" {
+  let data = read_fixture("alltypes_dictionary.parquet")
+  let rows_file = @parquet.read_bytes(data) catch {
+    err => fail(err.to_string())
+  }
+  let columnar = @parquet.read_bytes_columnar(data) catch {
+    err => fail(err.to_string())
+  }
+  try! assert_columnar_matches_rows(columnar, rows_file)
+  match columnar.column_data()[8] {
+    @parquet.Utf8Values(values) =>
+      assert_eq(@utf8.decode_lossy(values[0][:]), "01/01/09")
+    @parquet.NullableUtf8Values(values) =>
+      match values[0] {
+        Some(value) => assert_eq(@utf8.decode_lossy(value[:]), "01/01/09")
+        None => fail("expected first dictionary utf8 value")
+      }
+    @parquet.BinaryValues(values) =>
+      assert_eq(@utf8.decode_lossy(values[0][:]), "01/01/09")
+    @parquet.NullableBinaryValues(values) =>
+      match values[0] {
+        Some(value) => assert_eq(@utf8.decode_lossy(value[:]), "01/01/09")
+        None => fail("expected first dictionary binary value")
+      }
+    _ =>
+      fail(
+        "expected typed dictionary byte-array column: \{columnar.column_data()[8].to_string()}",
+      )
+  }
 }
 
 ///|
@@ -445,6 +505,13 @@ test "reads delta binary packed fixture typed columnar" {
       assert_eq(values.length(), columnar.row_count())
     @parquet.Int64Values(values) =>
       assert_eq(values.length(), columnar.row_count())
+    @parquet.NullableInt64Values(values) => {
+      assert_eq(values.length(), columnar.row_count())
+      match values[0] {
+        Some(_) => ()
+        None => fail("expected first dense integer value")
+      }
+    }
     _ => fail("expected dense integer column: \{column_data[0].to_string()}")
   }
 }
@@ -497,6 +564,58 @@ test "reads required utf8 column as typed data" {
     _ =>
       fail(
         "expected dense utf8 column: \{columnar.column_data()[0].to_string()}",
+      )
+  }
+}
+
+///|
+test "reads optional int64 column as typed data" {
+  let file = @parquet.new_parquet_file(
+    [@parquet.new_column("score", @parquet.Int64, @parquet.Optional)],
+    [
+      [@parquet.Value::Int64(10L)],
+      [@parquet.Value::Null],
+      [@parquet.Value::Int64(30L)],
+    ],
+    Some("test"),
+  )
+  let encoded = try! @parquet.write_bytes(file)
+  let columnar = try! @parquet.read_bytes_columnar(encoded)
+  match columnar.column_data()[0] {
+    @parquet.NullableInt64Values(values) => {
+      assert_eq(values[0], Some(10L))
+      assert_eq(values[1], None)
+      assert_eq(values[2], Some(30L))
+    }
+    _ =>
+      fail(
+        "expected nullable int64 column: \{columnar.column_data()[0].to_string()}",
+      )
+  }
+}
+
+///|
+test "reads optional binary column as typed data" {
+  let file = @parquet.new_parquet_file(
+    [@parquet.new_column("blob", @parquet.Binary, @parquet.Optional)],
+    [
+      [@parquet.Value::Binary(bytes_from_ints([1, 2, 3]))],
+      [@parquet.Value::Null],
+      [@parquet.Value::Binary(bytes_from_ints([4, 5]))],
+    ],
+    Some("test"),
+  )
+  let encoded = try! @parquet.write_bytes(file)
+  let columnar = try! @parquet.read_bytes_columnar(encoded)
+  match columnar.column_data()[0] {
+    @parquet.NullableBinaryValues(values) => {
+      assert_eq(values[0], Some(bytes_from_ints([1, 2, 3])))
+      assert_eq(values[1], None)
+      assert_eq(values[2], Some(bytes_from_ints([4, 5])))
+    }
+    _ =>
+      fail(
+        "expected nullable binary column: \{columnar.column_data()[0].to_string()}",
       )
   }
 }
