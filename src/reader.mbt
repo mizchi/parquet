@@ -115,17 +115,19 @@ fn decode_data_page_v1(
 
 ///|
 fn decode_data_page_v2(
-  data : Bytes,
+  level_data : Bytes,
   payload_offset : Int,
   header : DataPageHeaderV2Meta,
   column : LeafColumnMeta,
   dictionary : Array[Value]?,
+  value_data : Bytes,
+  value_offset : Int,
 ) -> Array[Value] raise ParquetError {
   if column.max_repetition_level > 0 {
     unsupported("Repeated columns are not supported yet")
   }
   let _repetition_levels = decode_levels_v2(
-    data,
+    level_data,
     payload_offset,
     header.repetition_levels_byte_length,
     column.max_repetition_level,
@@ -133,13 +135,12 @@ fn decode_data_page_v2(
   )
   let definition_offset = payload_offset + header.repetition_levels_byte_length
   let definition_levels = decode_levels_v2(
-    data,
+    level_data,
     definition_offset,
     header.definition_levels_byte_length,
     column.max_definition_level,
     header.num_values,
   )
-  let value_offset = definition_offset + header.definition_levels_byte_length
   let non_null_count = if column.max_definition_level == 0 {
     header.num_values
   } else {
@@ -148,7 +149,7 @@ fn decode_data_page_v2(
     })
   }
   let (decoded_values, _) = decode_non_null_values(
-    data,
+    value_data,
     value_offset,
     header.encoding,
     column,
@@ -228,16 +229,43 @@ fn decode_column_chunk(
         None => invalid_data("DATA_PAGE without data_page_header")
       }
     } else if page_header.page_type == page_type_data_page_v2 {
-      if chunk.meta_data.codec != codec_uncompressed {
-        unsupported("Compressed DATA_PAGE_V2 is not supported right now")
-      }
       match page_header.data_page_v2 {
-        Some(data_page_v2) =>
+        Some(data_page_v2) => {
+          let value_offset = payload_offset +
+            data_page_v2.repetition_levels_byte_length +
+            data_page_v2.definition_levels_byte_length
+          let compressed_value_len = page_header.compressed_page_size -
+            data_page_v2.repetition_levels_byte_length -
+            data_page_v2.definition_levels_byte_length
+          let uncompressed_value_len = page_header.uncompressed_page_size -
+            data_page_v2.repetition_levels_byte_length -
+            data_page_v2.definition_levels_byte_length
+          let (value_data, value_data_offset) = if data_page_v2.is_compressed &&
+            chunk.meta_data.codec != codec_uncompressed {
+            if compressed_value_len == 0 {
+              (Bytes::default(), 0)
+            } else {
+              (
+                decompress_page_payload(
+                  data,
+                  value_offset,
+                  compressed_value_len,
+                  uncompressed_value_len,
+                  chunk.meta_data.codec,
+                ),
+                0,
+              )
+            }
+          } else {
+            (data, value_offset)
+          }
           values.append(
             decode_data_page_v2(
-              data, payload_offset, data_page_v2, column, dictionary,
+              data, payload_offset, data_page_v2, column, dictionary, value_data,
+              value_data_offset,
             ),
           )
+        }
         None => invalid_data("DATA_PAGE_V2 without data_page_header_v2")
       }
     } else if page_header.page_type == page_type_dictionary_page {

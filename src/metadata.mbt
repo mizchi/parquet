@@ -282,6 +282,7 @@ fn read_data_page_header_v2(
   let mut encoding = -1
   let mut definition_levels_byte_length = 0
   let mut repetition_levels_byte_length = 0
+  let mut is_compressed = true
   let mut done = false
   while not(done) {
     match reader.read_field_begin() {
@@ -300,10 +301,7 @@ fn read_data_page_header_v2(
           4 => encoding = reader.read_i32()
           5 => definition_levels_byte_length = reader.read_i32()
           6 => repetition_levels_byte_length = reader.read_i32()
-          7 => {
-            let _is_compressed = reader.read_bool()
-            ()
-          }
+          7 => is_compressed = reader.read_bool()
           _ => reader.skip(wire_type)
         }
     }
@@ -316,6 +314,7 @@ fn read_data_page_header_v2(
     encoding,
     definition_levels_byte_length,
     repetition_levels_byte_length,
+    is_compressed,
   }
 }
 

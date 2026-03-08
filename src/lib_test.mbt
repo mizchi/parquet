@@ -327,6 +327,19 @@ test "reads fixed length byte array fixture" {
 }
 
 ///|
+test "reads empty snappy datapage v2 fixture" {
+  let file = try! read_parquet_fixture(
+    "datapage_v2_empty_datapage.snappy.parquet",
+  )
+  assert_eq(file.columns().length(), 1)
+  assert_eq(file.columns()[0].name(), "value")
+  assert_eq(file.columns()[0].column_type(), @parquet.Float)
+  assert_eq(file.rows().length(), 1)
+  assert_eq(file.rows()[0].length(), 1)
+  assert_eq(file.rows()[0][0], @parquet.Value::Null)
+}
+
+///|
 test "reads int96 from spark fixture" {
   let file = try! read_parquet_fixture("int96_from_spark.parquet")
   assert_eq(file.columns().length(), 1)

@@ -55,6 +55,7 @@ priv struct DataPageHeaderV2Meta {
   encoding : Int
   definition_levels_byte_length : Int
   repetition_levels_byte_length : Int
+  is_compressed : Bool
 }
 
 ///|

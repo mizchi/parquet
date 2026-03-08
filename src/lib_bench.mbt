@@ -57,6 +57,12 @@ test "read int96 from spark benchmark" (b : @bench.T) {
 }
 
 ///|
+test "read empty snappy datapage v2 benchmark" (b : @bench.T) {
+  let data = read_bench_fixture("datapage_v2_empty_datapage.snappy.parquet")
+  b.bench(() => ignore(try! read_bytes(data)))
+}
+
+///|
 test "write flat parquet benchmark" (b : @bench.T) {
   let file = sample_flat_file()
   b.bench(() => ignore(try! write_bytes(file)))
