@@ -71,6 +71,30 @@ fn table_to_cells(file : @parquet.ParquetFile) -> Array[Array[String]] {
 }
 
 ///|
+fn assert_columnar_matches_rows(
+  columnar : @parquet.ParquetColumnarFile,
+  rows_file : @parquet.ParquetFile,
+) -> Unit raise {
+  assert_eq(columnar.columns(), rows_file.columns())
+  assert_eq(columnar.row_count(), rows_file.rows().length())
+  let column_values = columnar.column_values()
+  let rows = rows_file.rows()
+  assert_eq(column_values.length(), columnar.columns().length())
+  for column_index in 0..<column_values.length() {
+    assert_eq(column_values[column_index].length(), columnar.row_count())
+  }
+  for row_index in 0..<columnar.row_count() {
+    for column_index in 0..<column_values.length() {
+      assert_eq(
+        column_values[column_index][row_index],
+        rows[row_index][column_index],
+      )
+    }
+  }
+  assert_eq(columnar.created_by(), rows_file.created_by())
+}
+
+///|
 fn read_fixture(name : String) -> Bytes {
   try! @fs.read_file_to_bytes("fixtures/apache-parquet-testing/data/" + name)
 }
@@ -383,6 +407,22 @@ test "reads alltypes dictionary fixture" {
   assert_eq(file.columns()[10].column_type(), @parquet.TimestampMicros)
   assert_row_shape(file.rows()[0], 0, true, "01/01/09", "0", 1230768000000000L)
   assert_row_shape(file.rows()[1], 1, false, "01/01/09", "1", 1230768060000000L)
+}
+
+///|
+test "reads alltypes plain fixture columnar" {
+  let data = read_fixture("alltypes_plain.parquet")
+  let rows_file = try! @parquet.read_bytes(data)
+  let columnar = try! @parquet.read_bytes_columnar(data)
+  try! assert_columnar_matches_rows(columnar, rows_file)
+}
+
+///|
+test "reads int32 null pages fixture columnar" {
+  let data = read_fixture("int32_with_null_pages.parquet")
+  let rows_file = try! @parquet.read_bytes(data)
+  let columnar = try! @parquet.read_bytes_columnar(data)
+  try! assert_columnar_matches_rows(columnar, rows_file)
 }
 
 ///|

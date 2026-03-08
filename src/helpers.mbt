@@ -38,16 +38,6 @@ fn bit_width(value : Int) -> Int {
 }
 
 ///|
-fn i64_add_wrapping(a : Int64, b : Int64) -> Int64 {
-  (a.reinterpret_as_uint64() + b.reinterpret_as_uint64()).reinterpret_as_int64()
-}
-
-///|
-fn i64_add_u64_wrapping(a : Int64, b : UInt64) -> Int64 {
-  (a.reinterpret_as_uint64() + b).reinterpret_as_int64()
-}
-
-///|
 fn zigzag_decode_i64(value : UInt64) -> Int64 {
   let shifted = value >> 1
   let sign = if (value & (1).to_uint64()) == UInt64::default() {

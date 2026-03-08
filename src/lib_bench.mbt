@@ -156,6 +156,12 @@ test "read delta binary packed benchmark" (b : @bench.T) {
 }
 
 ///|
+test "read delta binary packed columnar benchmark" (b : @bench.T) {
+  let data = read_bench_fixture("delta_binary_packed.parquet")
+  b.bench(() => ignore(try! read_bytes_columnar(data)))
+}
+
+///|
 test "delta binary packed footer/schema benchmark" (b : @bench.T) {
   let data = read_bench_fixture("delta_binary_packed.parquet")
   b.bench(() => {
@@ -255,7 +261,9 @@ test "delta binary packed last column raw delta benchmark" (b : @bench.T) {
 test "delta binary packed build rows benchmark" (b : @bench.T) {
   let ctx = delta_bench_context()
   b.bench(() => {
-    ignore(try! build_rows(ctx.columns, ctx.column_values, ctx.row_count))
+    ignore(
+      try! build_rows(ctx.columns.length(), ctx.column_values, ctx.row_count),
+    )
   })
 }
 
@@ -263,6 +271,12 @@ test "delta binary packed build rows benchmark" (b : @bench.T) {
 test "read int32 null pages benchmark" (b : @bench.T) {
   let data = read_bench_fixture("int32_with_null_pages.parquet")
   b.bench(() => ignore(try! read_bytes(data)))
+}
+
+///|
+test "read int32 null pages columnar benchmark" (b : @bench.T) {
+  let data = read_bench_fixture("int32_with_null_pages.parquet")
+  b.bench(() => ignore(try! read_bytes_columnar(data)))
 }
 
 ///|

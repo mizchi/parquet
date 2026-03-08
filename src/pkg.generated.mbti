@@ -4,11 +4,17 @@ package "mizchi/parquet"
 // Values
 pub fn new_column(String, ColumnType, Repetition) -> Column
 
+pub fn new_parquet_columnar_file(Array[Column], Array[Array[Value]], Int, String?) -> ParquetColumnarFile
+
 pub fn new_parquet_file(Array[Column], Array[Array[Value]], String?) -> ParquetFile
 
 pub fn read_bytes(Bytes) -> ParquetFile raise ParquetError
 
+pub fn read_bytes_columnar(Bytes) -> ParquetColumnarFile raise ParquetError
+
 pub fn read_file(String) -> ParquetFile raise ParquetError
+
+pub fn read_file_columnar(String) -> ParquetColumnarFile raise ParquetError
 
 pub fn write_bytes(ParquetFile) -> Bytes raise ParquetError
 
@@ -47,6 +53,19 @@ pub(all) enum ColumnType {
 }
 pub impl Eq for ColumnType
 pub impl Show for ColumnType
+
+pub struct ParquetColumnarFile {
+  columns : Array[Column]
+  column_values : Array[Array[Value]]
+  row_count : Int
+  created_by : String?
+}
+pub fn ParquetColumnarFile::column_values(Self) -> Array[Array[Value]]
+pub fn ParquetColumnarFile::columns(Self) -> Array[Column]
+pub fn ParquetColumnarFile::created_by(Self) -> String?
+pub fn ParquetColumnarFile::row_count(Self) -> Int
+pub impl Eq for ParquetColumnarFile
+pub impl Show for ParquetColumnarFile
 
 pub struct ParquetFile {
   columns : Array[Column]

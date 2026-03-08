@@ -91,3 +91,45 @@ pub fn ParquetFile::rows(self : ParquetFile) -> Array[Array[Value]] {
 pub fn ParquetFile::created_by(self : ParquetFile) -> String? {
   self.created_by
 }
+
+///|
+pub struct ParquetColumnarFile {
+  columns : Array[Column]
+  column_values : Array[Array[Value]]
+  row_count : Int
+  created_by : String?
+} derive(Show, Eq)
+
+///|
+pub fn new_parquet_columnar_file(
+  columns : Array[Column],
+  column_values : Array[Array[Value]],
+  row_count : Int,
+  created_by : String?,
+) -> ParquetColumnarFile {
+  { columns, column_values, row_count, created_by }
+}
+
+///|
+pub fn ParquetColumnarFile::columns(
+  self : ParquetColumnarFile,
+) -> Array[Column] {
+  self.columns
+}
+
+///|
+pub fn ParquetColumnarFile::column_values(
+  self : ParquetColumnarFile,
+) -> Array[Array[Value]] {
+  self.column_values
+}
+
+///|
+pub fn ParquetColumnarFile::row_count(self : ParquetColumnarFile) -> Int {
+  self.row_count
+}
+
+///|
+pub fn ParquetColumnarFile::created_by(self : ParquetColumnarFile) -> String? {
+  self.created_by
+}

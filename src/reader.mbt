@@ -902,11 +902,10 @@ fn decode_column_chunk(
 
 ///|
 fn build_rows(
-  columns : Array[LeafColumnMeta],
+  column_count : Int,
   column_values : Array[Array[Value]],
   row_count : Int,
 ) -> Array[Array[Value]] raise ParquetError {
-  let column_count = columns.length()
   for column_index in 0..<column_count {
     if column_values[column_index].length() != row_count {
       invalid_data("Column length mismatch while assembling rows")
@@ -922,6 +921,17 @@ fn build_rows(
     }
   }
   rows
+}
+
+///|
+fn build_public_columns(columns : Array[LeafColumnMeta]) -> Array[Column] {
+  columns.map(fn(column) {
+    {
+      name: column.name,
+      column_type: column.column_type,
+      repetition: column.repetition,
+    }
+  })
 }
 
 ///|
@@ -945,7 +955,9 @@ fn check_magic(data : Bytes) -> Unit raise ParquetError {
 }
 
 ///|
-fn decode_parquet(data : Bytes) -> ParquetFile raise ParquetError {
+fn decode_parquet_columnar(
+  data : Bytes,
+) -> ParquetColumnarFile raise ParquetError {
   check_magic(data)
   let footer_len = read_u32_le(data, data.length() - 8)
   let footer_start = data.length() - 8 - footer_len
@@ -954,14 +966,21 @@ fn decode_parquet(data : Bytes) -> ParquetFile raise ParquetError {
   }
   let metadata = read_file_metadata(data, footer_start, footer_len)
   let leaf_columns = build_leaf_columns(metadata.schema)
-  let all_rows : Array[Array[Value]] = []
+  let public_columns = build_public_columns(leaf_columns)
+  let column_count = leaf_columns.length()
+  let all_column_values : Array[Array[Value]] = Array::makei(column_count, fn(
+    _,
+  ) {
+    []
+  })
+  let mut total_rows = 0
   for row_group in metadata.row_groups {
-    if row_group.columns.length() != leaf_columns.length() {
+    if row_group.columns.length() != column_count {
       invalid_data("RowGroup column count does not match schema leaf count")
     }
-    let column_values : Array[Array[Value]] = []
-    for column_index in 0..<leaf_columns.length() {
-      column_values.push(
+    total_rows += row_group.num_rows.to_int()
+    for column_index in 0..<column_count {
+      all_column_values[column_index].append(
         decode_column_chunk(
           data,
           row_group.columns[column_index],
@@ -969,19 +988,25 @@ fn decode_parquet(data : Bytes) -> ParquetFile raise ParquetError {
         ),
       )
     }
-    all_rows.append(
-      build_rows(leaf_columns, column_values, row_group.num_rows.to_int()),
-    )
   }
+  new_parquet_columnar_file(
+    public_columns,
+    all_column_values,
+    total_rows,
+    metadata.created_by,
+  )
+}
+
+///|
+fn decode_parquet(data : Bytes) -> ParquetFile raise ParquetError {
+  let columnar = decode_parquet_columnar(data)
   {
-    columns: leaf_columns.map(fn(column) {
-      {
-        name: column.name,
-        column_type: column.column_type,
-        repetition: column.repetition,
-      }
-    }),
-    rows: all_rows,
-    created_by: metadata.created_by,
+    columns: columnar.columns,
+    rows: build_rows(
+      columnar.columns.length(),
+      columnar.column_values,
+      columnar.row_count,
+    ),
+    created_by: columnar.created_by,
   }
 }
