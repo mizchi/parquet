@@ -130,27 +130,20 @@ fn unpack_lsb_bitpacked(
 }
 
 ///|
-fn decode_rle_hybrid(
+fn decode_rle_hybrid_range(
   data : Bytes,
   start : Int,
+  end : Int,
   bit_width : Int,
   count : Int,
-  length_prefixed : Bool,
 ) -> (Array[Int], Int) raise ParquetError {
   let mut offset = start
-  let end = if length_prefixed {
-    let encoded_len = read_u32_le(data, offset)
-    offset += 4
-    offset + encoded_len
-  } else {
-    data.length()
-  }
   let values : Array[Int] = Array::new(capacity=count)
   if bit_width == 0 {
     for _ in 0..<count {
       values.push(0)
     }
-    return (values, offset - start)
+    return (values, 0)
   }
   while values.length() < count && offset < end {
     let header_reader = CompactReader::new(data, offset)
@@ -189,6 +182,28 @@ fn decode_rle_hybrid(
     }
   }
   (values, offset - start)
+}
+
+///|
+fn decode_rle_hybrid(
+  data : Bytes,
+  start : Int,
+  bit_width : Int,
+  count : Int,
+  length_prefixed : Bool,
+) -> (Array[Int], Int) raise ParquetError {
+  let mut offset = start
+  let end = if length_prefixed {
+    let encoded_len = read_u32_le(data, offset)
+    offset += 4
+    offset + encoded_len
+  } else {
+    data.length()
+  }
+  let (values, consumed) = decode_rle_hybrid_range(
+    data, offset, end, bit_width, count,
+  )
+  (values, offset - start + consumed)
 }
 
 ///|
@@ -384,9 +399,7 @@ fn decode_plain_values(
         offset += 4
         values.push(
           Value::String(
-            bytes_to_utf8_string(
-              data.view(start=offset, end=offset + len).to_bytes(),
-            ),
+            bytes_to_utf8_string(data.view(start=offset, end=offset + len)),
           ),
         )
         offset += len
@@ -473,7 +486,7 @@ fn decode_non_null_values(
         let (values, consumed) = decode_delta_byte_array(data, start, count)
         let decoded : Array[Value] = []
         for value in values {
-          decoded.push(Value::String(bytes_to_utf8_string(value)))
+          decoded.push(Value::String(bytes_to_utf8_string(value[:])))
         }
         (decoded, consumed)
       }

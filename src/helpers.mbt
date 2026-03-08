@@ -74,8 +74,8 @@ fn zigzag_encode_i32(value : Int) -> UInt64 {
 }
 
 ///|
-fn bytes_to_utf8_string(bytes : Bytes) -> String {
-  @utf8.decode_lossy(bytes[:])
+fn bytes_to_utf8_string(bytes : BytesView) -> String {
+  @utf8.decode_lossy(bytes)
 }
 
 ///|

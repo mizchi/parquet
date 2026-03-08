@@ -31,14 +31,17 @@ fn CompactReader::read_byte(self : CompactReader) -> Byte raise ParquetError {
 }
 
 ///|
-fn CompactReader::read_bytes(
+fn CompactReader::read_binary(
   self : CompactReader,
-  len : Int,
-) -> Bytes raise ParquetError {
+) -> BytesView raise ParquetError {
+  let len = self.read_varint32()
+  if len < 0 {
+    invalid_data("Negative binary length")
+  }
   self.ensure(len)
   let view = self.data.view(start=self.offset, end=self.offset + len)
   self.offset += len
-  view.to_bytes()
+  view
 }
 
 ///|
@@ -100,15 +103,6 @@ fn CompactReader::read_i32(self : CompactReader) -> Int raise ParquetError {
 ///|
 fn CompactReader::read_i64(self : CompactReader) -> Int64 raise ParquetError {
   zigzag_decode_i64(self.read_varint64())
-}
-
-///|
-fn CompactReader::read_binary(self : CompactReader) -> Bytes raise ParquetError {
-  let len = self.read_varint32()
-  if len < 0 {
-    invalid_data("Negative binary length")
-  }
-  self.read_bytes(len)
 }
 
 ///|

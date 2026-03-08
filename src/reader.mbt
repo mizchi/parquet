@@ -23,13 +23,13 @@ fn decode_levels_v2(
   if max_level == 0 || len == 0 {
     Array::make(count, 0)
   } else {
-    let view = data.view(start~, end=start + len).to_bytes()
-    let (levels, _) = decode_rle_hybrid(
-      view,
-      0,
+    let view = data.view(start~, end=start + len)
+    let (levels, _) = decode_rle_hybrid_range(
+      view.data(),
+      view.start_offset(),
+      view.start_offset() + view.length(),
       bit_width(max_level),
       count,
-      false,
     )
     levels
   }
