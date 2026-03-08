@@ -42,6 +42,10 @@ info:
 bench-compare-rust:
     node scripts/compare_rust_bench.mjs
 
+# Compare MoonBit js/wasm-gc/native reader benchmarks against the local Rust baseline
+bench-compare-all:
+    node scripts/compare_all_bench.mjs
+
 # DuckDB interoperability end-to-end checks
 e2e-duckdb:
     node scripts/duckdb_e2e.mjs

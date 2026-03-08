@@ -5,6 +5,7 @@
     "moonbitlang/x": "0.4.40"
   },
   "repository": "https://github.com/mizchi/parquet",
+  "readme": "README.md",
   "license": "Apache-2.0",
   "keywords": [
     "moonbit",

@@ -23,8 +23,8 @@ priv struct DeltaPageBenchContext {
 }
 
 ///|
-fn delta_bench_context() -> DeltaBenchContext {
-  let data = read_bench_fixture("delta_binary_packed.parquet")
+fn fixture_bench_context(name : String) -> DeltaBenchContext {
+  let data = read_bench_fixture(name)
   try! check_magic(data)
   let footer_len = try! read_u32_le(data, data.length() - 8)
   let footer_start = data.length() - 8 - footer_len
@@ -49,10 +49,23 @@ fn delta_bench_context() -> DeltaBenchContext {
 }
 
 ///|
-fn delta_first_column_context() -> DeltaPageBenchContext {
-  let ctx = delta_bench_context()
-  let column = ctx.columns[0]
-  let chunk = ctx.row_group.columns[0]
+fn delta_bench_context() -> DeltaBenchContext {
+  fixture_bench_context("delta_binary_packed.parquet")
+}
+
+///|
+fn int32_null_pages_bench_context() -> DeltaBenchContext {
+  fixture_bench_context("int32_with_null_pages.parquet")
+}
+
+///|
+fn fixture_column_context(
+  fixture : String,
+  column_index : Int,
+) -> DeltaPageBenchContext {
+  let ctx = fixture_bench_context(fixture)
+  let column = ctx.columns[column_index]
+  let chunk = ctx.row_group.columns[column_index]
   let offset = chunk.meta_data.data_page_offset.to_int()
   let (page_header, page_header_len) = try! read_page_header(ctx.data, offset)
   let payload_offset = offset + page_header_len
@@ -96,6 +109,27 @@ fn delta_first_column_context() -> DeltaPageBenchContext {
         None => panic()
       }
   }
+}
+
+///|
+fn delta_column_context(column_index : Int) -> DeltaPageBenchContext {
+  fixture_column_context("delta_binary_packed.parquet", column_index)
+}
+
+///|
+fn delta_first_column_context() -> DeltaPageBenchContext {
+  delta_column_context(0)
+}
+
+///|
+fn delta_last_column_context() -> DeltaPageBenchContext {
+  let ctx = delta_bench_context()
+  delta_column_context(ctx.columns.length() - 1)
+}
+
+///|
+fn int32_null_pages_column_context() -> DeltaPageBenchContext {
+  fixture_column_context("int32_with_null_pages.parquet", 0)
 }
 
 ///|
@@ -185,6 +219,39 @@ test "delta binary packed first column raw delta benchmark" (b : @bench.T) {
 }
 
 ///|
+test "delta binary packed last column chunk benchmark" (b : @bench.T) {
+  let ctx = delta_last_column_context()
+  b.bench(() => {
+    ignore(try! decode_column_chunk(ctx.data, ctx.chunk, ctx.column))
+  })
+}
+
+///|
+test "delta binary packed last column values benchmark" (b : @bench.T) {
+  let ctx = delta_last_column_context()
+  b.bench(() => {
+    ignore(
+      try! decode_non_null_values(
+        ctx.data,
+        ctx.value_offset,
+        ctx.encoding,
+        ctx.column,
+        ctx.value_count,
+        None,
+      ),
+    )
+  })
+}
+
+///|
+test "delta binary packed last column raw delta benchmark" (b : @bench.T) {
+  let ctx = delta_last_column_context()
+  b.bench(() => {
+    ignore(try! decode_delta_binary_packed(ctx.data, ctx.value_offset))
+  })
+}
+
+///|
 test "delta binary packed build rows benchmark" (b : @bench.T) {
   let ctx = delta_bench_context()
   b.bench(() => {
@@ -196,6 +263,32 @@ test "delta binary packed build rows benchmark" (b : @bench.T) {
 test "read int32 null pages benchmark" (b : @bench.T) {
   let data = read_bench_fixture("int32_with_null_pages.parquet")
   b.bench(() => ignore(try! read_bytes(data)))
+}
+
+///|
+test "int32 null pages decode columns benchmark" (b : @bench.T) {
+  let ctx = int32_null_pages_bench_context()
+  b.bench(() => {
+    let values : Array[Array[Value]] = Array::new(capacity=ctx.columns.length())
+    for index in 0..<ctx.columns.length() {
+      values.push(
+        try! decode_column_chunk(
+          ctx.data,
+          ctx.row_group.columns[index],
+          ctx.columns[index],
+        ),
+      )
+    }
+    ignore(values)
+  })
+}
+
+///|
+test "int32 null pages first column chunk benchmark" (b : @bench.T) {
+  let ctx = int32_null_pages_column_context()
+  b.bench(() => {
+    ignore(try! decode_column_chunk(ctx.data, ctx.chunk, ctx.column))
+  })
 }
 
 ///|

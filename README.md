@@ -1,115 +1,65 @@
-# MoonBit Template
+# mizchi/parquet
 
-A minimal MoonBit project template with CI, justfile, and AI coding assistant support.
+Parquet reader/writer for MoonBit.
 
-## Usage
+## Status
 
-Clone this repository and start coding:
+- Reader passes the vendored `apache-parquet-testing` fixtures used in this repo:
+  - `delta_binary_packed`
+  - `delta_byte_array`
+  - `delta_encoding_optional_column`
+  - `delta_encoding_required_column`
+  - `int32_with_null_pages`
+  - `fixed_length_byte_array`
+  - `datapage_v2_empty_datapage.snappy.parquet`
+  - `int96_from_spark`
+  - `alltypes_plain`
+  - `alltypes_dictionary`
+- Writer currently supports flat schemas with `Int32`, `Int64`, `String`, and `Binary`, with `Required` / `Optional` repetition.
+- DuckDB interoperability is checked both ways:
+  - DuckDB-written parquet can be read by this implementation.
+  - MoonBit-written parquet can be read by DuckDB.
 
-```bash
-git clone https://github.com/mizchi/moonbit-template my-project
-cd my-project
-```
+## Benchmark
 
-Update `moon.mod.json` with your module name:
+Measured on 2026-03-09 on `Apple M5`, `macOS 26.2`, `Darwin arm64`.
 
-```json
-{
-  "name": "your-username/your-project",
-  ...
-}
-```
-
-### Post-install
-
-Set up pre-commit hooks with [prek](https://github.com/j178/prek):
-
-```bash
-prek install
-```
-
-Optional: install [starlint](https://github.com/mizchi/starlint) for MoonBit linting, then uncomment the `starlint` hook in `.pre-commit-config.yaml`:
+Reproduce:
 
 ```bash
-moon install mizchi/starlint/cmd/starlint
+just bench-compare-all
+just bench-compare-rust
 ```
 
-## Quick Commands
+Comparison table from `just bench-compare-all`:
+
+| benchmark | moon(js) | moon(wasm-gc) | moon(native) | rust |
+|---|---:|---:|---:|---:|
+| read delta binary packed benchmark | 846.96 us | 241.81 us | 1.26 ms | 138.42 us |
+| read int32 null pages benchmark | 53.80 us | 24.70 us | 101.40 us | 5.96 us |
+| read fixed length byte array benchmark | 77.85 us | 26.64 us | 168.70 us | unsupported |
+| read alltypes plain benchmark | 24.07 us | 15.26 us | 57.84 us | 17.73 us |
+| read alltypes dictionary benchmark | 20.78 us | 25.29 us | 80.78 us | 21.84 us |
+| read int96 from spark benchmark | 7.79 us | 5.04 us | 13.46 us | 4.78 us |
+| read empty snappy datapage v2 benchmark | 3.80 us | 3.03 us | 8.91 us | 2.17 us |
+
+Notes:
+
+- Rust is the local baseline in `tools/rust-bench`, built on top of Apache's `parquet` crate.
+- `fixed_length_byte_array` is marked `unsupported` because the current Rust benchmark tool does not read that fixture.
+- On this machine, `wasm-gc` is the fastest MoonBit target for the read-side microbenchmarks above.
+
+## Development
 
 ```bash
-just           # check + test
-just fmt       # format code
-just fmt-check # verify formatting
-just check     # type check
-just test      # run tests
-just test-update  # update snapshot tests
-just run       # run main
-just info      # generate type definition files
-just ci        # local CI equivalent for default target
-just ci-all    # lint + js/native test matrix
-just release-check-all  # release check on js + native
+just                  # check + test
+just target=js bench
+just target=wasm-gc bench
+just target=native bench
+just bench-compare-all
+just e2e-duckdb
+moon info
 ```
-
-## Project Structure
-
-```
-my-project/
-├── moon.mod.json      # Module configuration
-├── src/
-│   ├── moon.pkg       # Package configuration
-│   ├── lib.mbt        # Library code
-│   ├── lib_test.mbt   # Tests
-│   ├── lib_bench.mbt  # Benchmarks
-│   ├── README.mbt.md  # Package README + doc tests
-│   ├── quickcheck_test.mbt # Property tests
-│   └── main/
-│       ├── moon.pkg
-│       └── main.mbt   # Entry point
-├── justfile           # Task runner
-└── .github/workflows/
-    └── ci.yml         # GitHub Actions CI
-```
-
-## Features
-
-- `src/` directory structure with `moon.pkg` format
-- Snapshot testing with `inspect()`
-- Doc tests in `.mbt.md` files
-- Property-based tests with `moonbitlang/quickcheck`
-- Benchmarks with `moon bench`
-- GitHub Actions CI with format and `.mbti` verification
-- Pre-commit hooks via [prek](https://github.com/j178/prek) (optional [starlint](https://github.com/mizchi/starlint))
-- Claude Code / GitHub Copilot support (AGENTS.md)
-
-## Recommended Reading
-
-- Latest MoonBit update as of 2026-03-08: [MoonBit 0.8.0 Released (2026-02-09)](https://www.moonbitlang.com/updates/moonbit-0-8-0-release)
-- Property testing reference: [moonbitlang/quickcheck](https://github.com/moonbitlang/quickcheck)
-
-## CLI Tool Template
-
-To build a CLI tool, use the [`feat/cli`](https://github.com/mizchi/moonbit-template/tree/feat/cli) branch:
-
-```bash
-git clone -b feat/cli https://github.com/mizchi/moonbit-template my-cli
-```
-
-The `feat/cli` branch includes:
-
-- `src/cmd/app/` - CLI executable (`is-main: true`, native target)
-- `install.sh` - curl-based installer script
-- `.github/workflows/release.yml` - Builds and releases linux-x64 / macos-arm64 binaries
-- Two install methods: `moon install` and `curl | sh`
-
-## Release Checklist
-
-Before tagging a release:
-
-1. Update `moon.mod.json` version and metadata (`repository`, `keywords`, `description`)
-2. Update `CHANGELOG.md`
-3. Run `just release-check-all`
-4. Create annotated tag (for example: `git tag -a v0.2.0 -m "Release v0.2.0"`)
-5. Push branch and tag
 
 ## License
 

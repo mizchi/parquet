@@ -72,6 +72,46 @@ fn read_partial_u64_le(data : Bytes, start : Int) -> UInt64 {
 }
 
 ///|
+fn read_varint64_at(
+  data : Bytes,
+  start : Int,
+) -> (UInt64, Int) raise ParquetError {
+  let mut offset = start
+  let mut shift = 0
+  let mut result = UInt64::default()
+  while shift < 64 {
+    if offset >= data.length() {
+      invalid_data("Unexpected end of compact stream")
+    }
+    let byte = data[offset].to_int()
+    offset += 1
+    let payload = (byte & 0x7f).to_uint64()
+    result = result | (payload << shift)
+    if (byte & 0x80) == 0 {
+      return (result, offset - start)
+    }
+    shift += 7
+  }
+  invalid_data("Varint is too long")
+  (UInt64::default(), 0)
+}
+
+///|
+fn read_varint32_at(data : Bytes, start : Int) -> (Int, Int) raise ParquetError {
+  let (value, consumed) = read_varint64_at(data, start)
+  (value.to_int(), consumed)
+}
+
+///|
+fn read_zigzag_i64_at(
+  data : Bytes,
+  start : Int,
+) -> (Int64, Int) raise ParquetError {
+  let (value, consumed) = read_varint64_at(data, start)
+  (zigzag_decode_i64(value), consumed)
+}
+
+///|
 fn append_lsb_bitpacked_ints(
   values : Array[Int],
   data : Bytes,
@@ -113,11 +153,14 @@ fn append_lsb_bitpacked_ints(
     }
     return
   }
-  for index in 0..<count {
-    let bit_offset = index * bit_width
-    let byte_index = start + bit_offset / 8
-    let shift = bit_offset % 8
-    let low = read_partial_u64_le(data, byte_index) >> shift
+  let mut byte_index = start
+  let mut shift = 0
+  for _ in 0..<count {
+    let low = if byte_index + 8 <= data.length() {
+      data.unsafe_read_uint64_le(byte_index) >> shift
+    } else {
+      read_partial_u64_le(data, byte_index) >> shift
+    }
     let spill_bits = shift + bit_width - 64
     if spill_bits > 0 {
       let high_byte = if byte_index + 8 < data.length() {
@@ -131,6 +174,9 @@ fn append_lsb_bitpacked_ints(
     } else {
       values.push((low & mask).to_int())
     }
+    let next_shift = shift + bit_width
+    byte_index += next_shift >> 3
+    shift = next_shift & 7
   }
 }
 
@@ -187,11 +233,14 @@ fn append_lsb_bitpacked_deltas(
     }
     return current
   }
-  for index in 0..<count {
-    let bit_offset = index * bit_width
-    let byte_index = start + bit_offset / 8
-    let shift = bit_offset % 8
-    let low = read_partial_u64_le(data, byte_index) >> shift
+  let mut byte_index = start
+  let mut shift = 0
+  for _ in 0..<count {
+    let low = if byte_index + 8 <= data.length() {
+      data.unsafe_read_uint64_le(byte_index) >> shift
+    } else {
+      read_partial_u64_le(data, byte_index) >> shift
+    }
     let spill_bits = shift + bit_width - 64
     let unpacked = if spill_bits > 0 {
       let high_byte = if byte_index + 8 < data.length() {
@@ -206,6 +255,173 @@ fn append_lsb_bitpacked_deltas(
     let delta = i64_add_u64_wrapping(min_delta, unpacked)
     current = i64_add_wrapping(current, delta)
     values.push(current)
+    let next_shift = shift + bit_width
+    byte_index += next_shift >> 3
+    shift = next_shift & 7
+  }
+  current
+}
+
+///|
+fn append_lsb_bitpacked_int32_delta_values(
+  values : Array[Value],
+  data : Bytes,
+  start : Int,
+  bit_width : Int,
+  count : Int,
+  min_delta : Int64,
+  previous : Int64,
+) -> Int64 {
+  let mut current = previous
+  if count == 0 {
+    return current
+  }
+  if bit_width == 0 {
+    for _ in 0..<count {
+      current = i64_add_wrapping(current, min_delta)
+      values.push(Value::Int32(current.to_int()))
+    }
+    return current
+  }
+  if bit_width == 64 {
+    let mut offset = start
+    for _ in 0..<count {
+      let delta = i64_add_u64_wrapping(
+        min_delta,
+        data.unsafe_read_uint64_le(offset),
+      )
+      current = i64_add_wrapping(current, delta)
+      values.push(Value::Int32(current.to_int()))
+      offset += 8
+    }
+    return current
+  }
+  let mask = bit_mask_u64(bit_width)
+  if bit_width <= 56 {
+    let mut offset = start
+    let mut bit_buffer = UInt64::default()
+    let mut bits_in_buffer = 0
+    for _ in 0..<count {
+      while bits_in_buffer < bit_width {
+        bit_buffer = bit_buffer | (data[offset].to_uint64() << bits_in_buffer)
+        bits_in_buffer += 8
+        offset += 1
+      }
+      let delta = i64_add_u64_wrapping(min_delta, bit_buffer & mask)
+      current = i64_add_wrapping(current, delta)
+      values.push(Value::Int32(current.to_int()))
+      bit_buffer = bit_buffer >> bit_width
+      bits_in_buffer -= bit_width
+    }
+    return current
+  }
+  let mut byte_index = start
+  let mut shift = 0
+  for _ in 0..<count {
+    let low = if byte_index + 8 <= data.length() {
+      data.unsafe_read_uint64_le(byte_index) >> shift
+    } else {
+      read_partial_u64_le(data, byte_index) >> shift
+    }
+    let spill_bits = shift + bit_width - 64
+    let unpacked = if spill_bits > 0 {
+      let high_byte = if byte_index + 8 < data.length() {
+        data[byte_index + 8].to_uint64()
+      } else {
+        UInt64::default()
+      }
+      low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
+    } else {
+      low & mask
+    }
+    let delta = i64_add_u64_wrapping(min_delta, unpacked)
+    current = i64_add_wrapping(current, delta)
+    values.push(Value::Int32(current.to_int()))
+    let next_shift = shift + bit_width
+    byte_index += next_shift >> 3
+    shift = next_shift & 7
+  }
+  current
+}
+
+///|
+fn append_lsb_bitpacked_int64_delta_values(
+  values : Array[Value],
+  data : Bytes,
+  start : Int,
+  bit_width : Int,
+  count : Int,
+  min_delta : Int64,
+  previous : Int64,
+) -> Int64 {
+  let mut current = previous
+  if count == 0 {
+    return current
+  }
+  if bit_width == 0 {
+    for _ in 0..<count {
+      current = i64_add_wrapping(current, min_delta)
+      values.push(Value::Int64(current))
+    }
+    return current
+  }
+  if bit_width == 64 {
+    let mut offset = start
+    for _ in 0..<count {
+      let delta = i64_add_u64_wrapping(
+        min_delta,
+        data.unsafe_read_uint64_le(offset),
+      )
+      current = i64_add_wrapping(current, delta)
+      values.push(Value::Int64(current))
+      offset += 8
+    }
+    return current
+  }
+  let mask = bit_mask_u64(bit_width)
+  if bit_width <= 56 {
+    let mut offset = start
+    let mut bit_buffer = UInt64::default()
+    let mut bits_in_buffer = 0
+    for _ in 0..<count {
+      while bits_in_buffer < bit_width {
+        bit_buffer = bit_buffer | (data[offset].to_uint64() << bits_in_buffer)
+        bits_in_buffer += 8
+        offset += 1
+      }
+      let delta = i64_add_u64_wrapping(min_delta, bit_buffer & mask)
+      current = i64_add_wrapping(current, delta)
+      values.push(Value::Int64(current))
+      bit_buffer = bit_buffer >> bit_width
+      bits_in_buffer -= bit_width
+    }
+    return current
+  }
+  let mut byte_index = start
+  let mut shift = 0
+  for _ in 0..<count {
+    let low = if byte_index + 8 <= data.length() {
+      data.unsafe_read_uint64_le(byte_index) >> shift
+    } else {
+      read_partial_u64_le(data, byte_index) >> shift
+    }
+    let spill_bits = shift + bit_width - 64
+    let unpacked = if spill_bits > 0 {
+      let high_byte = if byte_index + 8 < data.length() {
+        data[byte_index + 8].to_uint64()
+      } else {
+        UInt64::default()
+      }
+      low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
+    } else {
+      low & mask
+    }
+    let delta = i64_add_u64_wrapping(min_delta, unpacked)
+    current = i64_add_wrapping(current, delta)
+    values.push(Value::Int64(current))
+    let next_shift = shift + bit_width
+    byte_index += next_shift >> 3
+    shift = next_shift & 7
   }
   current
 }
@@ -220,16 +436,16 @@ fn decode_rle_hybrid_range(
 ) -> (Array[Int], Int) raise ParquetError {
   let mut offset = start
   let values : Array[Int] = Array::new(capacity=count)
+  let mut produced = 0
   if bit_width == 0 {
     for _ in 0..<count {
       values.push(0)
     }
     return (values, 0)
   }
-  while values.length() < count && offset < end {
-    let header_reader = CompactReader::new(data, offset)
-    let header = header_reader.read_varint32()
-    offset = header_reader.offset
+  while produced < count && offset < end {
+    let (header, header_len) = read_varint32_at(data, offset)
+    offset += header_len
     if (header & 1) == 0 {
       let run_len = header >> 1
       let byte_width = ceil_div(bit_width, 8)
@@ -238,25 +454,27 @@ fn decode_rle_hybrid_range(
         repeated = repeated | (data[offset + i].to_int() << (i * 8))
       }
       offset += byte_width
-      let values_to_take = if count - values.length() < run_len {
-        count - values.length()
+      let values_to_take = if count - produced < run_len {
+        count - produced
       } else {
         run_len
       }
       for _ in 0..<values_to_take {
         values.push(repeated)
       }
+      produced += values_to_take
     } else {
       let groups = header >> 1
       let group_values = groups * 8
       let byte_len = ceil_div(group_values * bit_width, 8)
-      let values_to_take = if count - values.length() < group_values {
-        count - values.length()
+      let values_to_take = if count - produced < group_values {
+        count - produced
       } else {
         group_values
       }
       append_lsb_bitpacked_ints(values, data, offset, bit_width, values_to_take)
       offset += byte_len
+      produced += values_to_take
     }
   }
   (values, offset - start)
@@ -289,11 +507,15 @@ fn decode_delta_binary_packed(
   data : Bytes,
   start : Int,
 ) -> (Array[Int64], Int) raise ParquetError {
-  let reader = CompactReader::new(data, start)
-  let block_size = reader.read_varint32()
-  let miniblock_count = reader.read_varint32()
-  let total_count = reader.read_varint32()
-  let first_value = reader.read_i64()
+  let original_start = start
+  let (block_size, block_size_len) = read_varint32_at(data, start)
+  let start = start + block_size_len
+  let (miniblock_count, miniblock_len) = read_varint32_at(data, start)
+  let start = start + miniblock_len
+  let (total_count, total_count_len) = read_varint32_at(data, start)
+  let start = start + total_count_len
+  let (first_value, first_value_len) = read_zigzag_i64_at(data, start)
+  let mut offset = start + first_value_len
   if block_size <= 0 || miniblock_count <= 0 || total_count <= 0 {
     invalid_data("Invalid DELTA_BINARY_PACKED header")
   }
@@ -304,20 +526,21 @@ fn decode_delta_binary_packed(
   let values : Array[Int64] = Array::new(capacity=total_count)
   values.push(first_value)
   let mut previous = first_value
-  while values.length() < total_count {
-    let min_delta = reader.read_i64()
-    reader.ensure(miniblock_count)
-    let bit_widths = reader.data.view(
-      start=reader.offset,
-      end=reader.offset + miniblock_count,
-    )
-    reader.offset += miniblock_count
+  let mut produced = 1
+  while produced < total_count {
+    let (min_delta, min_delta_len) = read_zigzag_i64_at(data, offset)
+    offset += min_delta_len
+    if offset + miniblock_count > data.length() {
+      invalid_data("Unexpected end of delta miniblock widths")
+    }
+    let bit_widths_start = offset
+    offset += miniblock_count
     for miniblock_index in 0..<miniblock_count {
-      let remaining = total_count - values.length()
+      let remaining = total_count - produced
       if remaining <= 0 {
         break
       }
-      let bit_width = bit_widths[miniblock_index].to_int()
+      let bit_width = data[bit_widths_start + miniblock_index].to_int()
       let byte_len = ceil_div(values_per_miniblock * bit_width, 8)
       let values_to_take = if remaining < values_per_miniblock {
         remaining
@@ -325,18 +548,131 @@ fn decode_delta_binary_packed(
         values_per_miniblock
       }
       previous = append_lsb_bitpacked_deltas(
-        values,
-        reader.data,
-        reader.offset,
-        bit_width,
-        values_to_take,
-        min_delta,
-        previous,
+        values, data, offset, bit_width, values_to_take, min_delta, previous,
       )
-      reader.offset += byte_len
+      offset += byte_len
+      produced += values_to_take
     }
   }
-  (values, reader.offset - start)
+  (values, offset - original_start)
+}
+
+///|
+fn decode_delta_binary_packed_int32_values(
+  data : Bytes,
+  start : Int,
+  count : Int,
+) -> (Array[Value], Int) raise ParquetError {
+  let original_start = start
+  let (block_size, block_size_len) = read_varint32_at(data, start)
+  let start = start + block_size_len
+  let (miniblock_count, miniblock_len) = read_varint32_at(data, start)
+  let start = start + miniblock_len
+  let (total_count, total_count_len) = read_varint32_at(data, start)
+  let start = start + total_count_len
+  let (first_value, first_value_len) = read_zigzag_i64_at(data, start)
+  let mut offset = start + first_value_len
+  if block_size <= 0 || miniblock_count <= 0 || total_count <= 0 {
+    invalid_data("Invalid DELTA_BINARY_PACKED header")
+  }
+  if total_count != count {
+    invalid_data("DELTA_BINARY_PACKED count mismatch")
+  }
+  let values_per_miniblock = block_size / miniblock_count
+  if values_per_miniblock <= 0 {
+    invalid_data("Invalid DELTA_BINARY_PACKED miniblock size")
+  }
+  let values : Array[Value] = Array::new(capacity=total_count)
+  values.push(Value::Int32(first_value.to_int()))
+  let mut previous = first_value
+  let mut produced = 1
+  while produced < total_count {
+    let (min_delta, min_delta_len) = read_zigzag_i64_at(data, offset)
+    offset += min_delta_len
+    if offset + miniblock_count > data.length() {
+      invalid_data("Unexpected end of delta miniblock widths")
+    }
+    let bit_widths_start = offset
+    offset += miniblock_count
+    for miniblock_index in 0..<miniblock_count {
+      let remaining = total_count - produced
+      if remaining <= 0 {
+        break
+      }
+      let bit_width = data[bit_widths_start + miniblock_index].to_int()
+      let byte_len = ceil_div(values_per_miniblock * bit_width, 8)
+      let values_to_take = if remaining < values_per_miniblock {
+        remaining
+      } else {
+        values_per_miniblock
+      }
+      previous = append_lsb_bitpacked_int32_delta_values(
+        values, data, offset, bit_width, values_to_take, min_delta, previous,
+      )
+      offset += byte_len
+      produced += values_to_take
+    }
+  }
+  (values, offset - original_start)
+}
+
+///|
+fn decode_delta_binary_packed_int64_values(
+  data : Bytes,
+  start : Int,
+  count : Int,
+) -> (Array[Value], Int) raise ParquetError {
+  let original_start = start
+  let (block_size, block_size_len) = read_varint32_at(data, start)
+  let start = start + block_size_len
+  let (miniblock_count, miniblock_len) = read_varint32_at(data, start)
+  let start = start + miniblock_len
+  let (total_count, total_count_len) = read_varint32_at(data, start)
+  let start = start + total_count_len
+  let (first_value, first_value_len) = read_zigzag_i64_at(data, start)
+  let mut offset = start + first_value_len
+  if block_size <= 0 || miniblock_count <= 0 || total_count <= 0 {
+    invalid_data("Invalid DELTA_BINARY_PACKED header")
+  }
+  if total_count != count {
+    invalid_data("DELTA_BINARY_PACKED count mismatch")
+  }
+  let values_per_miniblock = block_size / miniblock_count
+  if values_per_miniblock <= 0 {
+    invalid_data("Invalid DELTA_BINARY_PACKED miniblock size")
+  }
+  let values : Array[Value] = Array::new(capacity=total_count)
+  values.push(Value::Int64(first_value))
+  let mut previous = first_value
+  let mut produced = 1
+  while produced < total_count {
+    let (min_delta, min_delta_len) = read_zigzag_i64_at(data, offset)
+    offset += min_delta_len
+    if offset + miniblock_count > data.length() {
+      invalid_data("Unexpected end of delta miniblock widths")
+    }
+    let bit_widths_start = offset
+    offset += miniblock_count
+    for miniblock_index in 0..<miniblock_count {
+      let remaining = total_count - produced
+      if remaining <= 0 {
+        break
+      }
+      let bit_width = data[bit_widths_start + miniblock_index].to_int()
+      let byte_len = ceil_div(values_per_miniblock * bit_width, 8)
+      let values_to_take = if remaining < values_per_miniblock {
+        remaining
+      } else {
+        values_per_miniblock
+      }
+      previous = append_lsb_bitpacked_int64_delta_values(
+        values, data, offset, bit_width, values_to_take, min_delta, previous,
+      )
+      offset += byte_len
+      produced += values_to_take
+    }
+  }
+  (values, offset - original_start)
 }
 
 ///|
@@ -350,7 +686,7 @@ fn decode_delta_length_byte_array(
     invalid_data("DELTA_LENGTH_BYTE_ARRAY count mismatch")
   }
   let mut offset = start + lengths_len
-  let values : Array[Bytes] = []
+  let values : Array[Bytes] = Array::new(capacity=count)
   for length in lengths {
     let size = length.to_int()
     if size < 0 || offset + size > data.length() {
@@ -380,7 +716,7 @@ fn decode_delta_byte_array(
     count,
   )
   let mut previous = Bytes::default()
-  let values : Array[Bytes] = []
+  let values : Array[Bytes] = Array::new(capacity=count)
   for index in 0..<count {
     let prefix_len = prefix_lengths[index].to_int()
     if prefix_len < 0 || prefix_len > previous.length() {
@@ -399,7 +735,7 @@ fn decode_plain_boolean_values(
   start : Int,
   count : Int,
 ) -> (Array[Value], Int) raise ParquetError {
-  let values : Array[Value] = []
+  let values : Array[Value] = Array::new(capacity=count)
   for index in 0..<count {
     let byte_index = start + index / 8
     let bit_index = index % 8
@@ -443,7 +779,7 @@ fn decode_plain_values(
     return decode_plain_boolean_values(data, start, count)
   }
   let mut offset = start
-  let values : Array[Value] = []
+  let values : Array[Value] = Array::new(capacity=count)
   match column.column_type {
     Boolean => ()
     Int32 =>
@@ -537,22 +873,8 @@ fn decode_non_null_values(
     decode_plain_values(data, start, column, count)
   } else if encoding == encoding_delta_binary_packed {
     match column.column_type {
-      Int32 => {
-        let (values, consumed) = decode_delta_binary_packed(data, start)
-        let decoded : Array[Value] = Array::new(capacity=count)
-        for index in 0..<count {
-          decoded.push(Value::Int32(values[index].to_int()))
-        }
-        (decoded, consumed)
-      }
-      Int64 => {
-        let (values, consumed) = decode_delta_binary_packed(data, start)
-        let decoded : Array[Value] = Array::new(capacity=count)
-        for index in 0..<count {
-          decoded.push(Value::Int64(values[index]))
-        }
-        (decoded, consumed)
-      }
+      Int32 => decode_delta_binary_packed_int32_values(data, start, count)
+      Int64 => decode_delta_binary_packed_int64_values(data, start, count)
       _ => {
         unsupported("DELTA_BINARY_PACKED is only valid for INT32/INT64")
         ([], 0)
