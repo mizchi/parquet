@@ -63,3 +63,33 @@ jobs:
         run: just target=${{ matrix.target }} check
       - name: Moon test
         run: just target=${{ matrix.target }} test
+
+  playground:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup just
+        uses: extractions/setup-just@v3
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: playground/pnpm-lock.yaml
+      - name: Install MoonBit CLI
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+      - name: Moon version
+        run: moon version --all
+      - name: Moon update
+        run: moon update
+      - name: Install playground dependencies
+        run: pnpm --dir playground install --frozen-lockfile
+      - name: Playground check
+        run: just playground-check

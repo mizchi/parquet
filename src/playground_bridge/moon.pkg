@@ -1,0 +1,12 @@
+import {
+  "mizchi/parquet" @parquet,
+  "f4ah6o/duckdb" @duckdb,
+  "moonbitlang/core/strconv" @strconv,
+}
+
+options(
+  targets: {
+    "duckdb_runtime_js.mbt": [ "js" ],
+    "duckdb_runtime_other.mbt": [ "or", "native", "wasm", "wasm-gc" ],
+  },
+)

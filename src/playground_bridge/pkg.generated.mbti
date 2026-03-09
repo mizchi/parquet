@@ -1,0 +1,29 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "mizchi/parquet/playground_bridge"
+
+// Values
+pub fn query_registered_parquet(Bytes, String, String, (Result[PlaygroundTable, String]) -> Unit) -> Unit
+
+pub fn run_playground(Array[String], Array[String], Array[String], Array[Array[String]], Array[Array[Bool]], String, on_done~ : (Result[PlaygroundResult, String]) -> Unit) -> Unit
+
+// Errors
+
+// Types and methods
+pub struct PlaygroundResult {
+  parquet_bytes : Bytes
+  parquet_size : Int
+  parquet_file_name : String
+  preview : PlaygroundTable
+  query : PlaygroundTable
+}
+
+pub struct PlaygroundTable {
+  columns : Array[String]
+  rows : Array[Array[String]]
+  nulls : Array[Array[Bool]]
+}
+
+// Type aliases
+
+// Traits
+

@@ -61,6 +61,28 @@ just e2e-duckdb
 moon info
 ```
 
+## Browser Playground
+
+The repository includes a browser playground that generates parquet on DuckDB WASM and lets you try SQL against it immediately.
+
+```bash
+just playground-install
+just playground-dev
+```
+
+Production build:
+
+```bash
+just playground-build
+just playground-build-pages
+```
+
+In the UI, you can edit schema JSON / rows JSON / SQL, generate parquet bytes with `mizchi/parquet`, and execute `read_parquet('playground.parquet')` on the `f4ah6o/duckdb` WASM backend.
+
+GitHub Pages:
+
+`https://mizchi.github.io/parquet/`
+
 ## License
 
 Apache-2.0

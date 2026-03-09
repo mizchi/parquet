@@ -1,0 +1,11 @@
+import {
+  "mizchi/parquet/playground_bridge" @playground,
+}
+
+options(
+  "is-main": true,
+  targets: {
+    "main_js.mbt": [ "js" ],
+    "main_other.mbt": [ "or", "native", "wasm", "wasm-gc" ],
+  },
+)

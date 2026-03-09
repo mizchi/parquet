@@ -3,3 +3,10 @@ import {
   "moonbitlang/core/encoding/utf8" @utf8,
   "moonbitlang/x/fs" @fs,
 }
+
+options(
+  targets: {
+    "lib_io_default.mbt": [ "or", "native", "wasm", "wasm-gc" ],
+    "lib_io_js.mbt": [ "js" ],
+  },
+)

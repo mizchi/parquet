@@ -1,0 +1,21 @@
+{
+  "name": "parquet-playground",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:bridge": "node ../scripts/build_playground_bridge.mjs",
+    "dev": "pnpm run build:bridge && vite",
+    "build": "pnpm run build:bridge && vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.3",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@duckdb/duckdb-wasm": "^1.33.1-dev18.0"
+  }
+}

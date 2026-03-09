@@ -9,3 +9,7 @@ target
 .mooncakes.template-backup/
 _build.template-backup/
 target.template-backup
+.playwright-cli/
+playground/node_modules/
+playground/dist/
+playground/generated/
