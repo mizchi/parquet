@@ -43,8 +43,10 @@ jobs:
             target: js
           - os: ubuntu-latest
             target: native
+            duckdb_asset: libduckdb-linux-amd64.zip
           - os: macos-latest
             target: native
+            duckdb_asset: libduckdb-osx-universal.zip
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -55,6 +57,23 @@ jobs:
         run: |
           curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+      - name: Install DuckDB native library
+        if: matrix.target == 'native'
+        run: |
+          set -eu
+          dest="$HOME/brew/opt/duckdb"
+          mkdir -p "$dest/include" "$dest/lib"
+          tmpdir="$(mktemp -d)"
+          curl -fsSL \
+            -o "$tmpdir/duckdb.zip" \
+            "https://github.com/duckdb/duckdb/releases/download/v1.4.4/${{ matrix.duckdb_asset }}"
+          unzip -q "$tmpdir/duckdb.zip" -d "$tmpdir/unpacked"
+          cp "$tmpdir/unpacked/duckdb.h" "$dest/include/duckdb.h"
+          if [ -f "$tmpdir/unpacked/libduckdb.dylib" ]; then
+            cp "$tmpdir/unpacked/libduckdb.dylib" "$dest/lib/libduckdb.dylib"
+          else
+            cp "$tmpdir/unpacked/libduckdb.so" "$dest/lib/libduckdb.so"
+          fi
       - name: Moon version
         run: moon version --all
       - name: Moon update
