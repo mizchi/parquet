@@ -54,7 +54,7 @@ fn encode_rle_levels(
     }
     index += run_len
   }
-  if not(length_prefixed) {
+  if !length_prefixed {
     return body.to_bytes()
   }
   let out = ByteSink::new()

@@ -10,7 +10,7 @@ fn read_schema_element(
   let mut num_children : Int? = None
   let mut converted_type : Int? = None
   let mut done = false
-  while not(done) {
+  while !done {
     match reader.read_field_begin() {
       None => {
         reader.end_struct()
@@ -53,7 +53,7 @@ fn read_column_metadata(
   let mut data_page_offset = 0L
   let mut dictionary_page_offset : Int64? = None
   let mut done = false
-  while not(done) {
+  while !done {
     match reader.read_field_begin() {
       None => {
         reader.end_struct()
@@ -118,7 +118,7 @@ fn read_column_chunk(
   let mut file_offset = 0L
   let mut meta_data : ColumnMetaDataMeta? = None
   let mut done = false
-  while not(done) {
+  while !done {
     match reader.read_field_begin() {
       None => {
         reader.end_struct()
@@ -147,7 +147,7 @@ fn read_row_group(reader : CompactReader) -> RowGroupMeta raise ParquetError {
   let mut file_offset : Int64? = None
   let mut total_compressed_size : Int64? = None
   let mut done = false
-  while not(done) {
+  while !done {
     match reader.read_field_begin() {
       None => {
         reader.end_struct()
@@ -191,7 +191,7 @@ fn read_file_metadata(
   let mut row_groups : Array[RowGroupMeta] = []
   let mut created_by : String? = None
   let mut done = false
-  while not(done) {
+  while !done {
     match reader.read_field_begin() {
       None => {
         reader.end_struct()
@@ -247,7 +247,7 @@ fn read_data_page_header(
   let mut definition_level_encoding = -1
   let mut repetition_level_encoding = -1
   let mut done = false
-  while not(done) {
+  while !done {
     match reader.read_field_begin() {
       None => {
         reader.end_struct()
@@ -284,7 +284,7 @@ fn read_data_page_header_v2(
   let mut repetition_levels_byte_length = 0
   let mut is_compressed = true
   let mut done = false
-  while not(done) {
+  while !done {
     match reader.read_field_begin() {
       None => {
         reader.end_struct()
@@ -326,7 +326,7 @@ fn read_dictionary_page_header(
   let mut num_values = -1
   let mut encoding = -1
   let mut done = false
-  while not(done) {
+  while !done {
     match reader.read_field_begin() {
       None => {
         reader.end_struct()
@@ -360,7 +360,7 @@ fn read_page_header(
   let mut data_page_v2 : DataPageHeaderV2Meta? = None
   let mut dictionary_page : DictionaryPageHeaderMeta? = None
   let mut done = false
-  while not(done) {
+  while !done {
     match reader.read_field_begin() {
       None => {
         reader.end_struct()

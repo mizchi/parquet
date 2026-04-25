@@ -276,7 +276,7 @@ fn CompactReader::skip(
   } else if wire_type == thrift_wire_struct {
     self.begin_struct()
     let mut done = false
-    while not(done) {
+    while !done {
       match self.read_field_begin() {
         Some((_, next_type)) => self.skip(next_type)
         None => {

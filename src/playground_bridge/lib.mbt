@@ -35,7 +35,7 @@ fn parse_cell(
     return Ok(@parquet.Value::Null)
   }
   if type_name == "Int32" {
-    let parsed = @strconv.parse_int(value[:]) catch {
+    let parsed = @string.parse_int(value[:]) catch {
       err =>
         return Err(
           "invalid Int32 value: " + value + " (" + err.to_string() + ")",
@@ -44,7 +44,7 @@ fn parse_cell(
     return Ok(@parquet.Value::Int32(parsed))
   }
   if type_name == "Int64" {
-    let parsed = @strconv.parse_int64(value[:]) catch {
+    let parsed = @string.parse_int64(value[:]) catch {
       err =>
         return Err(
           "invalid Int64 value: " + value + " (" + err.to_string() + ")",

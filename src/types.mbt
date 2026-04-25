@@ -8,14 +8,39 @@ pub(all) enum ColumnType {
   Double
   String
   Binary
-} derive(Show, Eq)
+} derive(Eq)
+
+///|
+pub impl Show for ColumnType with output(self, logger) {
+  let name = match self {
+    Boolean => "Boolean"
+    Int32 => "Int32"
+    Int64 => "Int64"
+    TimestampMicros => "TimestampMicros"
+    Float => "Float"
+    Double => "Double"
+    String => "String"
+    Binary => "Binary"
+  }
+  logger.write_string(name)
+}
 
 ///|
 pub(all) enum Repetition {
   Required
   Optional
   Repeated
-} derive(Show, Eq)
+} derive(Eq)
+
+///|
+pub impl Show for Repetition with output(self, logger) {
+  let name = match self {
+    Required => "Required"
+    Optional => "Optional"
+    Repeated => "Repeated"
+  }
+  logger.write_string(name)
+}
 
 ///|
 pub(all) enum Value {
@@ -28,7 +53,22 @@ pub(all) enum Value {
   String(String)
   Binary(Bytes)
   Null
-} derive(Show, Eq)
+} derive(Eq)
+
+///|
+pub impl Show for Value with output(self, logger) {
+  match self {
+    Boolean(value) => logger.write_string("Boolean(\{value})")
+    Int32(value) => logger.write_string("Int32(\{value})")
+    Int64(value) => logger.write_string("Int64(\{value})")
+    TimestampMicros(value) => logger.write_string("TimestampMicros(\{value})")
+    Float(value) => logger.write_string("Float(\{value})")
+    Double(value) => logger.write_string("Double(\{value})")
+    String(value) => logger.write_string("String(\{value})")
+    Binary(value) => logger.write_string("Binary(\{value})")
+    Null => logger.write_string("Null")
+  }
+}
 
 ///|
 pub(all) enum ParquetColumnData {
@@ -46,7 +86,33 @@ pub(all) enum ParquetColumnData {
   NullableUtf8Values(Array[Bytes?])
   BinaryValues(Array[Bytes])
   NullableBinaryValues(Array[Bytes?])
-} derive(Show, Eq)
+} derive(Eq)
+
+///|
+pub impl Show for ParquetColumnData with output(self, logger) {
+  match self {
+    Values(values) => logger.write_string("Values(\{values})")
+    BooleanValues(values) => logger.write_string("BooleanValues(\{values})")
+    Int32Values(values) => logger.write_string("Int32Values(\{values})")
+    NullableInt32Values(values) =>
+      logger.write_string("NullableInt32Values(\{values})")
+    Int64Values(values) => logger.write_string("Int64Values(\{values})")
+    NullableInt64Values(values) =>
+      logger.write_string("NullableInt64Values(\{values})")
+    TimestampMicrosValues(values) =>
+      logger.write_string("TimestampMicrosValues(\{values})")
+    NullableTimestampMicrosValues(values) =>
+      logger.write_string("NullableTimestampMicrosValues(\{values})")
+    FloatValues(values) => logger.write_string("FloatValues(\{values})")
+    DoubleValues(values) => logger.write_string("DoubleValues(\{values})")
+    Utf8Values(values) => logger.write_string("Utf8Values(\{values})")
+    NullableUtf8Values(values) =>
+      logger.write_string("NullableUtf8Values(\{values})")
+    BinaryValues(values) => logger.write_string("BinaryValues(\{values})")
+    NullableBinaryValues(values) =>
+      logger.write_string("NullableBinaryValues(\{values})")
+  }
+}
 
 ///|
 pub fn ParquetColumnData::length(self : ParquetColumnData) -> Int {
@@ -157,7 +223,14 @@ pub struct Column {
   name : String
   column_type : ColumnType
   repetition : Repetition
-} derive(Show, Eq)
+} derive(Eq)
+
+///|
+pub impl Show for Column with output(self, logger) {
+  logger.write_string(
+    "Column { name: \{self.name}, column_type: \{self.column_type}, repetition: \{self.repetition} }",
+  )
+}
 
 ///|
 pub fn new_column(
