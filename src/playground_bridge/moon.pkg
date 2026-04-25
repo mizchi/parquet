@@ -1,7 +1,7 @@
 import {
   "mizchi/parquet" @parquet,
   "f4ah6o/duckdb" @duckdb,
-  "moonbitlang/core/strconv" @strconv,
+  "moonbitlang/core/string" @string,
 }
 
 options(

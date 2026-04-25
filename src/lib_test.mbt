@@ -36,7 +36,7 @@ fn parse_csv(text : String) -> Array[Array[String]] {
     }
     index += 1
   }
-  if not(in_quotes) && (not(field.is_empty()) || not(row.is_empty())) {
+  if !in_quotes && (!field.is_empty() || !row.is_empty()) {
     row.push(field.to_string())
     rows.push(row)
   }

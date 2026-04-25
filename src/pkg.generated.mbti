@@ -25,8 +25,7 @@ pub(all) suberror ParquetError {
   InvalidData(String)
   Unsupported(String)
   Io(String)
-}
-pub impl Eq for ParquetError
+} derive(Eq)
 pub impl Show for ParquetError
 
 // Types and methods
@@ -34,11 +33,10 @@ pub struct Column {
   name : String
   column_type : ColumnType
   repetition : Repetition
-}
+} derive(Eq)
 pub fn Column::column_type(Self) -> ColumnType
 pub fn Column::name(Self) -> String
 pub fn Column::repetition(Self) -> Repetition
-pub impl Eq for Column
 pub impl Show for Column
 
 pub(all) enum ColumnType {
@@ -50,8 +48,7 @@ pub(all) enum ColumnType {
   Double
   String
   Binary
-}
-pub impl Eq for ColumnType
+} derive(Eq)
 pub impl Show for ColumnType
 
 pub(all) enum ParquetColumnData {
@@ -69,9 +66,8 @@ pub(all) enum ParquetColumnData {
   NullableUtf8Values(Array[Bytes?])
   BinaryValues(Array[Bytes])
   NullableBinaryValues(Array[Bytes?])
-}
+} derive(Eq)
 pub fn ParquetColumnData::length(Self) -> Int
-pub impl Eq for ParquetColumnData
 pub impl Show for ParquetColumnData
 
 pub struct ParquetColumnarFile {
@@ -108,8 +104,7 @@ pub(all) enum Repetition {
   Required
   Optional
   Repeated
-}
-pub impl Eq for Repetition
+} derive(Eq)
 pub impl Show for Repetition
 
 pub(all) enum Value {
@@ -122,8 +117,7 @@ pub(all) enum Value {
   String(String)
   Binary(Bytes)
   Null
-}
-pub impl Eq for Value
+} derive(Eq)
 pub impl Show for Value
 
 // Type aliases
