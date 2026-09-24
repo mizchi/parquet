@@ -4,6 +4,27 @@ fn fail(message : String) -> Unit {
 }
 
 ///|
+/// `@env.args()` includes the runtime executable as argv[0] only on the
+/// JavaScript backend (mirroring `process.argv`); other backends already
+/// omit it. Normalize both cases to match the previous
+/// `@sys.get_cli_args()` behavior of omitting the runtime executable.
+#cfg(target="js")
+fn cli_args() -> Array[String] {
+  let args = @env.args()
+  if args.is_empty() {
+    []
+  } else {
+    args[1:].to_owned()
+  }
+}
+
+///|
+#cfg(not(target="js"))
+fn cli_args() -> Array[String] {
+  @env.args()
+}
+
+///|
 fn sample_file() -> @parquet.ParquetFile {
   @parquet.new_parquet_file(
     [
@@ -78,7 +99,7 @@ fn usage() -> Unit {
 
 ///|
 fn main {
-  let args = @sys.get_cli_args()
+  let args = cli_args()
   if args.length() != 3 {
     usage()
     fail("invalid arguments")

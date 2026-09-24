@@ -2,8 +2,9 @@ import {
   "mizchi/parquet/playground_bridge" @playground,
 }
 
+pkgtype(kind: "executable")
+
 options(
-  "is-main": true,
   targets: {
     "main_js.mbt": [ "js" ],
     "main_other.mbt": [ "or", "native", "wasm", "wasm-gc" ],

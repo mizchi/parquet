@@ -241,7 +241,7 @@ fn count_levels_range_non_null(
           let high_byte = if byte_index + 8 < data.length() {
             data[byte_index + 8].to_uint64()
           } else {
-            UInt64::default()
+            Default::default()
           }
           low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
         } else {
@@ -321,7 +321,7 @@ fn levels_range_all_max(
           let high_byte = if byte_index + 8 < data.length() {
             data[byte_index + 8].to_uint64()
           } else {
-            UInt64::default()
+            Default::default()
           }
           low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
         } else {
@@ -778,7 +778,7 @@ fn append_optional_values_from_levels_range(
           let high_byte = if byte_index + 8 < data.length() {
             data[byte_index + 8].to_uint64()
           } else {
-            UInt64::default()
+            Default::default()
           }
           low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
         } else {
@@ -881,7 +881,7 @@ fn[T] append_optional_option_values_from_levels_range(
           let high_byte = if byte_index + 8 < data.length() {
             data[byte_index + 8].to_uint64()
           } else {
-            UInt64::default()
+            Default::default()
           }
           low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
         } else {
@@ -977,7 +977,7 @@ fn append_optional_dictionary_values_from_levels_range(
           let high_byte = if byte_index + 8 < level_data.length() {
             level_data[byte_index + 8].to_uint64()
           } else {
-            UInt64::default()
+            Default::default()
           }
           low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
         } else {
@@ -1157,7 +1157,7 @@ fn append_optional_delta_byte_array_values_from_levels_range(
           let high_byte = if byte_index + 8 < level_data.length() {
             level_data[byte_index + 8].to_uint64()
           } else {
-            UInt64::default()
+            Default::default()
           }
           low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
         } else {
@@ -1262,7 +1262,7 @@ fn append_optional_plain_values_from_levels_range(
           let high_byte = if byte_index + 8 < level_data.length() {
             level_data[byte_index + 8].to_uint64()
           } else {
-            UInt64::default()
+            Default::default()
           }
           low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
         } else {
@@ -1647,14 +1647,14 @@ fn decode_dictionary_page_bytes(
     header.encoding != encoding_plain_dictionary {
     unsupported("Only PLAIN dictionary pages are supported right now")
   }
-  let values : Array[Bytes] = Array::new(capacity=header.num_values)
+  let values : Array[Bytes] = Array(capacity=header.num_values)
   let mut offset = payload_offset
   match column.column_type {
     String =>
       for _ in 0..<header.num_values {
         let len = read_u32_le(data, offset)
         offset += 4
-        values.push(data.view(start=offset, end=offset + len).to_bytes())
+        values.push(data.exact_view(start=offset, end=offset + len).to_owned())
         offset += len
       }
     Binary =>
@@ -1667,7 +1667,7 @@ fn decode_dictionary_page_bytes(
             byte_len
           }
         }
-        values.push(data.view(start=offset, end=offset + len).to_bytes())
+        values.push(data.exact_view(start=offset, end=offset + len).to_owned())
         offset += len
       }
     _ => unsupported("Only BYTE_ARRAY dictionary pages are supported here")
@@ -1731,7 +1731,7 @@ fn decode_required_utf8_values_into(
     for _ in 0..<count {
       let len = read_u32_le(data, offset)
       offset += 4
-      target.push(data.view(start=offset, end=offset + len).to_bytes())
+      target.push(data.exact_view(start=offset, end=offset + len).to_owned())
       offset += len
     }
     return offset - start
@@ -1780,7 +1780,7 @@ fn decode_required_binary_values_into(
           byte_len
         }
       }
-      target.push(data.view(start=offset, end=offset + len).to_bytes())
+      target.push(data.exact_view(start=offset, end=offset + len).to_owned())
       offset += len
     }
     return offset - start
@@ -1899,7 +1899,7 @@ fn decode_required_int32_column_chunk(
     .unwrap_or(chunk.meta_data.data_page_offset)
     .to_int()
   let target_values = chunk.meta_data.num_values.to_int()
-  let values : Array[Int] = Array::new(capacity=target_values)
+  let values : Array[Int] = Array(capacity=target_values)
   let mut dictionary : Array[Value]? = None
   while values.length() < target_values {
     let (page_header, page_header_len) = read_page_header(data, offset)
@@ -1972,7 +1972,7 @@ fn decode_required_int32_column_chunk(
           let (value_data, value_data_offset) = if data_page_v2.is_compressed &&
             chunk.meta_data.codec != codec_uncompressed {
             if compressed_value_len == 0 {
-              (Bytes::default(), 0)
+              (Default::default(), 0)
             } else {
               (
                 decompress_page_payload(
@@ -2067,7 +2067,7 @@ fn decode_required_int64_column_chunk(
     .unwrap_or(chunk.meta_data.data_page_offset)
     .to_int()
   let target_values = chunk.meta_data.num_values.to_int()
-  let values : Array[Int64] = Array::new(capacity=target_values)
+  let values : Array[Int64] = Array(capacity=target_values)
   let mut dictionary : Array[Value]? = None
   while values.length() < target_values {
     let (page_header, page_header_len) = read_page_header(data, offset)
@@ -2141,7 +2141,7 @@ fn decode_required_int64_column_chunk(
           let (value_data, value_data_offset) = if data_page_v2.is_compressed &&
             chunk.meta_data.codec != codec_uncompressed {
             if compressed_value_len == 0 {
-              (Bytes::default(), 0)
+              (Default::default(), 0)
             } else {
               (
                 decompress_page_payload(
@@ -2237,7 +2237,7 @@ fn decode_required_utf8_column_chunk(
     .unwrap_or(chunk.meta_data.data_page_offset)
     .to_int()
   let target_values = chunk.meta_data.num_values.to_int()
-  let values : Array[Bytes] = Array::new(capacity=target_values)
+  let values : Array[Bytes] = Array(capacity=target_values)
   let mut dictionary : Array[Bytes]? = None
   while values.length() < target_values {
     let (page_header, page_header_len) = read_page_header(data, offset)
@@ -2310,7 +2310,7 @@ fn decode_required_utf8_column_chunk(
           let (value_data, value_data_offset) = if data_page_v2.is_compressed &&
             chunk.meta_data.codec != codec_uncompressed {
             if compressed_value_len == 0 {
-              (Bytes::default(), 0)
+              (Default::default(), 0)
             } else {
               (
                 decompress_page_payload(
@@ -2405,7 +2405,7 @@ fn decode_required_binary_column_chunk(
     .unwrap_or(chunk.meta_data.data_page_offset)
     .to_int()
   let target_values = chunk.meta_data.num_values.to_int()
-  let values : Array[Bytes] = Array::new(capacity=target_values)
+  let values : Array[Bytes] = Array(capacity=target_values)
   let mut dictionary : Array[Bytes]? = None
   while values.length() < target_values {
     let (page_header, page_header_len) = read_page_header(data, offset)
@@ -2479,7 +2479,7 @@ fn decode_required_binary_column_chunk(
           let (value_data, value_data_offset) = if data_page_v2.is_compressed &&
             chunk.meta_data.codec != codec_uncompressed {
             if compressed_value_len == 0 {
-              (Bytes::default(), 0)
+              (Default::default(), 0)
             } else {
               (
                 decompress_page_payload(
@@ -2575,7 +2575,7 @@ fn decode_optional_int32_column_chunk(
     .unwrap_or(chunk.meta_data.data_page_offset)
     .to_int()
   let target_values = chunk.meta_data.num_values.to_int()
-  let values : Array[Int?] = Array::new(capacity=target_values)
+  let values : Array[Int?] = Array(capacity=target_values)
   let mut dictionary : Array[Value]? = None
   while values.length() < target_values {
     let (page_header, page_header_len) = read_page_header(data, offset)
@@ -2621,7 +2621,7 @@ fn decode_optional_int32_column_chunk(
               data_page.num_values,
             )
           }
-          let dense : Array[Int] = Array::new(capacity=non_null_count)
+          let dense : Array[Int] = Array(capacity=non_null_count)
           if non_null_count > 0 {
             ignore(
               decode_required_int32_values_into(
@@ -2672,7 +2672,7 @@ fn decode_optional_int32_column_chunk(
           let (value_data, value_data_offset) = if data_page_v2.is_compressed &&
             chunk.meta_data.codec != codec_uncompressed {
             if compressed_value_len == 0 {
-              (Bytes::default(), 0)
+              (Default::default(), 0)
             } else {
               (
                 decompress_page_payload(
@@ -2703,7 +2703,7 @@ fn decode_optional_int32_column_chunk(
               data_page_v2.num_values,
             )
           }
-          let dense : Array[Int] = Array::new(capacity=non_null_count)
+          let dense : Array[Int] = Array(capacity=non_null_count)
           if non_null_count > 0 {
             ignore(
               decode_required_int32_values_into(
@@ -2785,7 +2785,7 @@ fn decode_optional_utf8_column_chunk(
     .unwrap_or(chunk.meta_data.data_page_offset)
     .to_int()
   let target_values = chunk.meta_data.num_values.to_int()
-  let values : Array[Bytes?] = Array::new(capacity=target_values)
+  let values : Array[Bytes?] = Array(capacity=target_values)
   let mut dictionary : Array[Bytes]? = None
   while values.length() < target_values {
     let (page_header, page_header_len) = read_page_header(data, offset)
@@ -2831,7 +2831,7 @@ fn decode_optional_utf8_column_chunk(
               data_page.num_values,
             )
           }
-          let dense : Array[Bytes] = Array::new(capacity=non_null_count)
+          let dense : Array[Bytes] = Array(capacity=non_null_count)
           if non_null_count > 0 {
             ignore(
               decode_required_utf8_values_into(
@@ -2882,7 +2882,7 @@ fn decode_optional_utf8_column_chunk(
           let (value_data, value_data_offset) = if data_page_v2.is_compressed &&
             chunk.meta_data.codec != codec_uncompressed {
             if compressed_value_len == 0 {
-              (Bytes::default(), 0)
+              (Default::default(), 0)
             } else {
               (
                 decompress_page_payload(
@@ -2913,7 +2913,7 @@ fn decode_optional_utf8_column_chunk(
               data_page_v2.num_values,
             )
           }
-          let dense : Array[Bytes] = Array::new(capacity=non_null_count)
+          let dense : Array[Bytes] = Array(capacity=non_null_count)
           if non_null_count > 0 {
             ignore(
               decode_required_utf8_values_into(
@@ -2995,7 +2995,7 @@ fn decode_optional_int64_column_chunk(
     .unwrap_or(chunk.meta_data.data_page_offset)
     .to_int()
   let target_values = chunk.meta_data.num_values.to_int()
-  let values : Array[Int64?] = Array::new(capacity=target_values)
+  let values : Array[Int64?] = Array(capacity=target_values)
   let mut dictionary : Array[Value]? = None
   while values.length() < target_values {
     let (page_header, page_header_len) = read_page_header(data, offset)
@@ -3041,7 +3041,7 @@ fn decode_optional_int64_column_chunk(
               data_page.num_values,
             )
           }
-          let dense : Array[Int64] = Array::new(capacity=non_null_count)
+          let dense : Array[Int64] = Array(capacity=non_null_count)
           if non_null_count > 0 {
             ignore(
               decode_required_int64_values_into(
@@ -3093,7 +3093,7 @@ fn decode_optional_int64_column_chunk(
           let (value_data, value_data_offset) = if data_page_v2.is_compressed &&
             chunk.meta_data.codec != codec_uncompressed {
             if compressed_value_len == 0 {
-              (Bytes::default(), 0)
+              (Default::default(), 0)
             } else {
               (
                 decompress_page_payload(
@@ -3124,7 +3124,7 @@ fn decode_optional_int64_column_chunk(
               data_page_v2.num_values,
             )
           }
-          let dense : Array[Int64] = Array::new(capacity=non_null_count)
+          let dense : Array[Int64] = Array(capacity=non_null_count)
           if non_null_count > 0 {
             ignore(
               decode_required_int64_values_into(
@@ -3207,7 +3207,7 @@ fn decode_optional_binary_column_chunk(
     .unwrap_or(chunk.meta_data.data_page_offset)
     .to_int()
   let target_values = chunk.meta_data.num_values.to_int()
-  let values : Array[Bytes?] = Array::new(capacity=target_values)
+  let values : Array[Bytes?] = Array(capacity=target_values)
   let mut dictionary : Array[Bytes]? = None
   while values.length() < target_values {
     let (page_header, page_header_len) = read_page_header(data, offset)
@@ -3253,7 +3253,7 @@ fn decode_optional_binary_column_chunk(
               data_page.num_values,
             )
           }
-          let dense : Array[Bytes] = Array::new(capacity=non_null_count)
+          let dense : Array[Bytes] = Array(capacity=non_null_count)
           if non_null_count > 0 {
             ignore(
               decode_required_binary_values_into(
@@ -3305,7 +3305,7 @@ fn decode_optional_binary_column_chunk(
           let (value_data, value_data_offset) = if data_page_v2.is_compressed &&
             chunk.meta_data.codec != codec_uncompressed {
             if compressed_value_len == 0 {
-              (Bytes::default(), 0)
+              (Default::default(), 0)
             } else {
               (
                 decompress_page_payload(
@@ -3336,7 +3336,7 @@ fn decode_optional_binary_column_chunk(
               data_page_v2.num_values,
             )
           }
-          let dense : Array[Bytes] = Array::new(capacity=non_null_count)
+          let dense : Array[Bytes] = Array(capacity=non_null_count)
           if non_null_count > 0 {
             ignore(
               decode_required_binary_values_into(
@@ -3538,7 +3538,7 @@ fn decode_column_chunk(
     .unwrap_or(chunk.meta_data.data_page_offset)
     .to_int()
   let target_values = chunk.meta_data.num_values.to_int()
-  let values : Array[Value] = Array::new(capacity=target_values)
+  let values : Array[Value] = Array(capacity=target_values)
   let mut dictionary : Array[Value]? = None
   while values.length() < target_values {
     let (page_header, page_header_len) = read_page_header(data, offset)
@@ -3582,7 +3582,7 @@ fn decode_column_chunk(
           let (value_data, value_data_offset) = if data_page_v2.is_compressed &&
             chunk.meta_data.codec != codec_uncompressed {
             if compressed_value_len == 0 {
-              (Bytes::default(), 0)
+              (Default::default(), 0)
             } else {
               (
                 decompress_page_payload(

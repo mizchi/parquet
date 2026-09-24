@@ -1,8 +1,6 @@
 import {
-  "mizchi/parquet" @parquet,
-  "moonbitlang/x/sys" @sys,
+  "mizchi/parquet",
+  "moonbitlang/core/env",
 }
 
-options(
-  "is-main": true,
-)
+pkgtype(kind: "executable")

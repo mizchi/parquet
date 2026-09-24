@@ -1,7 +1,8 @@
 import {
-  "moonbitlang/core/bench" @bench,
-  "moonbitlang/core/encoding/utf8" @utf8,
-  "moonbitlang/x/fs" @fs,
+  "moonbitlang/core/bench",
+  "moonbitlang/core/debug",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/x/fs",
 }
 
 options(

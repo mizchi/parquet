@@ -51,9 +51,7 @@ fn fixture_bench_context(name : String) -> DeltaBenchContext {
   let metadata = try! read_file_metadata(data, footer_start, footer_len)
   let columns = try! build_leaf_columns(metadata.schema)
   let row_group = metadata.row_groups[0]
-  let column_values : Array[Array[Value]] = Array::new(
-    capacity=columns.length(),
-  )
+  let column_values : Array[Array[Value]] = Array(capacity=columns.length())
   for index in 0..<columns.length() {
     column_values.push(
       try! decode_column_chunk(data, row_group.columns[index], columns[index]),
@@ -202,7 +200,7 @@ test "delta binary packed footer/schema benchmark" (b : @bench.T) {
 test "delta binary packed decode columns benchmark" (b : @bench.T) {
   let ctx = delta_bench_context()
   b.bench(() => {
-    let values : Array[Array[Value]] = Array::new(capacity=ctx.columns.length())
+    let values : Array[Array[Value]] = Array(capacity=ctx.columns.length())
     for index in 0..<ctx.columns.length() {
       values.push(
         try! decode_column_chunk(
@@ -314,7 +312,7 @@ test "read delta byte array columnar benchmark" (b : @bench.T) {
 test "delta byte array decode columns benchmark" (b : @bench.T) {
   let ctx = delta_byte_array_bench_context()
   b.bench(() => {
-    let values : Array[Array[Value]] = Array::new(capacity=ctx.columns.length())
+    let values : Array[Array[Value]] = Array(capacity=ctx.columns.length())
     for index in 0..<ctx.columns.length() {
       values.push(
         try! decode_column_chunk(
@@ -370,7 +368,7 @@ test "read int32 null pages columnar benchmark" (b : @bench.T) {
 test "int32 null pages decode columns benchmark" (b : @bench.T) {
   let ctx = int32_null_pages_bench_context()
   b.bench(() => {
-    let values : Array[Array[Value]] = Array::new(capacity=ctx.columns.length())
+    let values : Array[Array[Value]] = Array(capacity=ctx.columns.length())
     for index in 0..<ctx.columns.length() {
       values.push(
         try! decode_column_chunk(

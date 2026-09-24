@@ -2,7 +2,7 @@
 /// Read a parquet file from disk.
 pub fn read_file(path : String) -> ParquetFile raise ParquetError {
   let data = @fs.read_file_to_bytes(path) catch {
-    err => raise ParquetError::Io(err.to_string())
+    @fs.IOError(msg) => raise ParquetError::Io(msg)
   }
   read_bytes(data)
 }
@@ -13,7 +13,7 @@ pub fn read_file_columnar(
   path : String,
 ) -> ParquetColumnarFile raise ParquetError {
   let data = @fs.read_file_to_bytes(path) catch {
-    err => raise ParquetError::Io(err.to_string())
+    @fs.IOError(msg) => raise ParquetError::Io(msg)
   }
   read_bytes_columnar(data)
 }
@@ -23,6 +23,6 @@ pub fn read_file_columnar(
 pub fn write_file(path : String, file : ParquetFile) -> Unit raise ParquetError {
   let data = write_bytes(file)
   @fs.write_bytes_to_file(path, data) catch {
-    err => raise ParquetError::Io(err.to_string())
+    @fs.IOError(msg) => raise ParquetError::Io(msg)
   }
 }

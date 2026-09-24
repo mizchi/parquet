@@ -8,10 +8,16 @@ pub(all) enum ColumnType {
   Double
   String
   Binary
-} derive(Eq)
+} derive(Eq, Debug)
 
 ///|
-pub impl Show for ColumnType with output(self, logger) {
+pub extend ColumnType with Eq::{not_equal, equal}
+
+///|
+pub extend ColumnType with @debug.Debug::{to_repr}
+
+///|
+pub impl Show for ColumnType with fn output(self, logger) {
   let name = match self {
     Boolean => "Boolean"
     Int32 => "Int32"
@@ -26,14 +32,23 @@ pub impl Show for ColumnType with output(self, logger) {
 }
 
 ///|
+pub extend ColumnType with Show::{to_string, output}
+
+///|
 pub(all) enum Repetition {
   Required
   Optional
   Repeated
-} derive(Eq)
+} derive(Eq, Debug)
 
 ///|
-pub impl Show for Repetition with output(self, logger) {
+pub extend Repetition with Eq::{not_equal, equal}
+
+///|
+pub extend Repetition with @debug.Debug::{to_repr}
+
+///|
+pub impl Show for Repetition with fn output(self, logger) {
   let name = match self {
     Required => "Required"
     Optional => "Optional"
@@ -41,6 +56,9 @@ pub impl Show for Repetition with output(self, logger) {
   }
   logger.write_string(name)
 }
+
+///|
+pub extend Repetition with Show::{to_string, output}
 
 ///|
 pub(all) enum Value {
@@ -53,10 +71,16 @@ pub(all) enum Value {
   String(String)
   Binary(Bytes)
   Null
-} derive(Eq)
+} derive(Eq, Debug)
 
 ///|
-pub impl Show for Value with output(self, logger) {
+pub extend Value with Eq::{not_equal, equal}
+
+///|
+pub extend Value with @debug.Debug::{to_repr}
+
+///|
+pub impl Show for Value with fn output(self, logger) {
   match self {
     Boolean(value) => logger.write_string("Boolean(\{value})")
     Int32(value) => logger.write_string("Int32(\{value})")
@@ -69,6 +93,9 @@ pub impl Show for Value with output(self, logger) {
     Null => logger.write_string("Null")
   }
 }
+
+///|
+pub extend Value with Show::{to_string, output}
 
 ///|
 pub(all) enum ParquetColumnData {
@@ -86,33 +113,51 @@ pub(all) enum ParquetColumnData {
   NullableUtf8Values(Array[Bytes?])
   BinaryValues(Array[Bytes])
   NullableBinaryValues(Array[Bytes?])
-} derive(Eq)
+} derive(Eq, Debug)
 
 ///|
-pub impl Show for ParquetColumnData with output(self, logger) {
+pub extend ParquetColumnData with Eq::{not_equal, equal}
+
+///|
+pub extend ParquetColumnData with @debug.Debug::{to_repr}
+
+///|
+pub impl Show for ParquetColumnData with fn output(self, logger) {
   match self {
-    Values(values) => logger.write_string("Values(\{values})")
-    BooleanValues(values) => logger.write_string("BooleanValues(\{values})")
-    Int32Values(values) => logger.write_string("Int32Values(\{values})")
+    Values(values) => logger.write_string("Values(\{@debug.Repr(values)})")
+    BooleanValues(values) =>
+      logger.write_string("BooleanValues(\{@debug.Repr(values)})")
+    Int32Values(values) =>
+      logger.write_string("Int32Values(\{@debug.Repr(values)})")
     NullableInt32Values(values) =>
-      logger.write_string("NullableInt32Values(\{values})")
-    Int64Values(values) => logger.write_string("Int64Values(\{values})")
+      logger.write_string("NullableInt32Values(\{@debug.Repr(values)})")
+    Int64Values(values) =>
+      logger.write_string("Int64Values(\{@debug.Repr(values)})")
     NullableInt64Values(values) =>
-      logger.write_string("NullableInt64Values(\{values})")
+      logger.write_string("NullableInt64Values(\{@debug.Repr(values)})")
     TimestampMicrosValues(values) =>
-      logger.write_string("TimestampMicrosValues(\{values})")
+      logger.write_string("TimestampMicrosValues(\{@debug.Repr(values)})")
     NullableTimestampMicrosValues(values) =>
-      logger.write_string("NullableTimestampMicrosValues(\{values})")
-    FloatValues(values) => logger.write_string("FloatValues(\{values})")
-    DoubleValues(values) => logger.write_string("DoubleValues(\{values})")
-    Utf8Values(values) => logger.write_string("Utf8Values(\{values})")
+      logger.write_string(
+        "NullableTimestampMicrosValues(\{@debug.Repr(values)})",
+      )
+    FloatValues(values) =>
+      logger.write_string("FloatValues(\{@debug.Repr(values)})")
+    DoubleValues(values) =>
+      logger.write_string("DoubleValues(\{@debug.Repr(values)})")
+    Utf8Values(values) =>
+      logger.write_string("Utf8Values(\{@debug.Repr(values)})")
     NullableUtf8Values(values) =>
-      logger.write_string("NullableUtf8Values(\{values})")
-    BinaryValues(values) => logger.write_string("BinaryValues(\{values})")
+      logger.write_string("NullableUtf8Values(\{@debug.Repr(values)})")
+    BinaryValues(values) =>
+      logger.write_string("BinaryValues(\{@debug.Repr(values)})")
     NullableBinaryValues(values) =>
-      logger.write_string("NullableBinaryValues(\{values})")
+      logger.write_string("NullableBinaryValues(\{@debug.Repr(values)})")
   }
 }
+
+///|
+pub extend ParquetColumnData with Show::{to_string, output}
 
 ///|
 pub fn ParquetColumnData::length(self : ParquetColumnData) -> Int {
@@ -223,14 +268,23 @@ pub struct Column {
   name : String
   column_type : ColumnType
   repetition : Repetition
-} derive(Eq)
+} derive(Eq, Debug)
 
 ///|
-pub impl Show for Column with output(self, logger) {
+pub extend Column with Eq::{not_equal, equal}
+
+///|
+pub extend Column with @debug.Debug::{to_repr}
+
+///|
+pub impl Show for Column with fn output(self, logger) {
   logger.write_string(
     "Column { name: \{self.name}, column_type: \{self.column_type}, repetition: \{self.repetition} }",
   )
 }
+
+///|
+pub extend Column with Show::{to_string, output}
 
 ///|
 pub fn new_column(
@@ -238,7 +292,7 @@ pub fn new_column(
   column_type : ColumnType,
   repetition : Repetition,
 ) -> Column {
-  { name, column_type, repetition }
+  { name, column_type, repetition, }
 }
 
 ///|
@@ -263,7 +317,7 @@ pub struct ParquetFile {
   column_data : Array[ParquetColumnData]
   mut rows_cache : Array[Array[Value]]?
   created_by : String?
-}
+} derive(Debug)
 
 ///|
 pub fn new_parquet_file(
@@ -317,7 +371,7 @@ pub fn ParquetFile::created_by(self : ParquetFile) -> String? {
 }
 
 ///|
-pub impl Eq for ParquetFile with equal(self, other) -> Bool {
+pub impl Eq for ParquetFile with fn equal(self, other) -> Bool {
   self.columns == other.columns &&
   self.row_count == other.row_count &&
   self.created_by == other.created_by &&
@@ -325,11 +379,20 @@ pub impl Eq for ParquetFile with equal(self, other) -> Bool {
 }
 
 ///|
-pub impl Show for ParquetFile with output(self, logger) {
+pub extend ParquetFile with Eq::{not_equal, equal}
+
+///|
+pub extend ParquetFile with @debug.Debug::{to_repr}
+
+///|
+pub impl Show for ParquetFile with fn output(self, logger) {
   logger.write_string(
     "ParquetFile { columns: \{self.columns.length()}, row_count: \{self.row_count} }",
   )
 }
+
+///|
+pub extend ParquetFile with Show::{to_string, output}
 
 ///|
 pub struct ParquetColumnarFile {
@@ -338,7 +401,7 @@ pub struct ParquetColumnarFile {
   row_count : Int
   mut column_values_cache : Array[Array[Value]]?
   created_by : String?
-}
+} derive(Debug)
 
 ///|
 pub fn new_parquet_columnar_file(
@@ -347,7 +410,7 @@ pub fn new_parquet_columnar_file(
   row_count : Int,
   created_by : String?,
 ) -> ParquetColumnarFile {
-  { columns, column_data, row_count, column_values_cache: None, created_by }
+  { columns, column_data, row_count, column_values_cache: None, created_by, }
 }
 
 ///|
@@ -389,7 +452,7 @@ pub fn ParquetColumnarFile::created_by(self : ParquetColumnarFile) -> String? {
 }
 
 ///|
-pub impl Eq for ParquetColumnarFile with equal(self, other) -> Bool {
+pub impl Eq for ParquetColumnarFile with fn equal(self, other) -> Bool {
   self.columns == other.columns &&
   self.row_count == other.row_count &&
   self.created_by == other.created_by &&
@@ -397,8 +460,17 @@ pub impl Eq for ParquetColumnarFile with equal(self, other) -> Bool {
 }
 
 ///|
-pub impl Show for ParquetColumnarFile with output(self, logger) {
+pub extend ParquetColumnarFile with Eq::{not_equal, equal}
+
+///|
+pub extend ParquetColumnarFile with @debug.Debug::{to_repr}
+
+///|
+pub impl Show for ParquetColumnarFile with fn output(self, logger) {
   logger.write_string(
     "ParquetColumnarFile { columns: \{self.columns.length()}, row_count: \{self.row_count} }",
   )
 }
+
+///|
+pub extend ParquetColumnarFile with Show::{to_string, output}

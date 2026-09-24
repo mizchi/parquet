@@ -133,7 +133,7 @@ fn read_column_chunk(
     }
   }
   match meta_data {
-    Some(meta_data) => { file_offset, meta_data }
+    Some(meta_data) => { file_offset, meta_data, }
     None => raise ParquetError::InvalidData("ColumnChunk without meta_data")
   }
 }
@@ -174,7 +174,7 @@ fn read_row_group(reader : CompactReader) -> RowGroupMeta raise ParquetError {
         }
     }
   }
-  { columns, total_byte_size, num_rows, file_offset, total_compressed_size }
+  { columns, total_byte_size, num_rows, file_offset, total_compressed_size, }
 }
 
 ///|
@@ -234,7 +234,7 @@ fn read_file_metadata(
   if version < 0 {
     invalid_data("Missing FileMetaData.version")
   }
-  { schema, row_groups, created_by }
+  { schema, row_groups, created_by, }
 }
 
 ///|
@@ -269,7 +269,7 @@ fn read_data_page_header(
     repetition_level_encoding < 0 {
     invalid_data("Missing DataPageHeader fields")
   }
-  { num_values, encoding }
+  { num_values, encoding, }
 }
 
 ///|
@@ -343,7 +343,7 @@ fn read_dictionary_page_header(
   if num_values < 0 || encoding < 0 {
     invalid_data("Missing DictionaryPageHeader fields")
   }
-  { num_values, encoding }
+  { num_values, encoding, }
 }
 
 ///|

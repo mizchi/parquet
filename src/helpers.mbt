@@ -21,8 +21,8 @@ fn ceil_div(n : Int, d : Int) -> Int {
 fn normalize_schema_name(value : String) -> String {
   let trimmed = value.trim()
   match trimmed.strip_suffix(":") {
-    Some(name) => name.to_string()
-    None => trimmed.to_string()
+    Some(name) => name.to_owned()
+    None => trimmed.to_owned()
   }
 }
 
@@ -40,10 +40,10 @@ fn bit_width(value : Int) -> Int {
 ///|
 fn zigzag_decode_i64(value : UInt64) -> Int64 {
   let shifted = value >> 1
-  let sign = if (value & (1).to_uint64()) == UInt64::default() {
-    UInt64::default()
+  let sign = if (value & (1).to_uint64()) == Default::default() {
+    Default::default()
   } else {
-    UInt64::default().lnot()
+    (Default::default() : UInt64).lnot()
   }
   (shifted ^ sign).reinterpret_as_int64()
 }
@@ -80,17 +80,17 @@ fn bytes_concat_prefix(
   suffix : BytesView,
 ) -> Bytes {
   if prefix_len == 0 {
-    return suffix.to_bytes()
+    return suffix.to_owned()
   }
   if suffix.length() == 0 {
     return if prefix_len == prev.length() {
       prev
     } else {
-      prev[:prefix_len].to_bytes()
+      prev[:prefix_len].to_owned()
     }
   }
   if prefix_len == prev.length() {
-    return prev + suffix.to_bytes()
+    return prev + suffix.to_owned()
   }
   Bytes::makei(prefix_len + suffix.length(), fn(i) {
     if i < prefix_len {

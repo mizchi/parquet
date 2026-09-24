@@ -27,7 +27,7 @@ fn encode_definition_levels(
   repetition : Repetition,
 ) -> Bytes {
   if repetition != Optional {
-    return Bytes::default()
+    return Default::default()
   }
   let levels = values.map(fn(value) { if value == Null { 0 } else { 1 } })
   encode_rle_levels(levels, 1, true)
