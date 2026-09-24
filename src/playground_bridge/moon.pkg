@@ -1,6 +1,6 @@
 import {
   "mizchi/parquet",
-  "f4ah6o/duckdb",
+  "mizchi/duckdb",
   "moonbitlang/core/string",
 }
 

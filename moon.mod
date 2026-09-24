@@ -4,7 +4,7 @@ version = "0.2.2"
 
 import {
   "moonbitlang/x@0.5.5",
-  "f4ah6o/duckdb@0.6.0",
+  "mizchi/duckdb@0.6.4",
 }
 
 readme = "README.md"

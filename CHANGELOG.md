@@ -25,17 +25,11 @@ All notable changes to this project should be documented in this file.
   `src/cmd/duckdb_e2e` with `moonbitlang/core/env` `args()`.
 - Regenerated `.mbti` interface files (`moon info`).
 
-### Known issues
-
-- `src/playground_bridge` (and its `src/cmd/playground_bridge` demo binary)
-  depend on `f4ah6o/duckdb`, whose own `duckdb_arrow_js.mbt` source (and the
-  `moonbitlang/quickcheck` version it pulls in) use a `for`/`match`-with-
-  `else` construct that the current `moonc` no longer parses. This is a
-  pre-existing incompatibility in that upstream dependency, reproducible
-  against the already-published `0.2.1` tag on the current toolchain, and is
-  unrelated to this release; it blocks `moon check`/`moon info` only for
-  those two packages, not for the core `mizchi/parquet` library or
-  `src/cmd/duckdb_e2e`.
+- `src/playground_bridge` now depends on `mizchi/duckdb` 0.6.4 instead of
+  `f4ah6o/duckdb` 0.6.0. `f4ah6o/duckdb` pulls in `moonbitlang/quickcheck`
+  0.9.10, which the current `moonc` no longer parses; `mizchi/duckdb` is a
+  fork with that fixed, used until the fix lands upstream. The API is the
+  same.
 
 ## [Unreleased]
 
