@@ -52,7 +52,7 @@ fn read_int96_micros(data : Bytes, start : Int) -> Int64 raise ParquetError {
 ///|
 fn bit_mask_u64(bit_width : Int) -> UInt64 {
   if bit_width >= 64 {
-    UInt64::default().lnot()
+    (Default::default() : UInt64).lnot()
   } else {
     ((1).to_uint64() << bit_width) - (1).to_uint64()
   }
@@ -63,7 +63,7 @@ fn read_partial_u64_le(data : Bytes, start : Int) -> UInt64 {
   if start + 8 <= data.length() {
     return data.unsafe_read_uint64_le(start)
   }
-  let mut value = UInt64::default()
+  let mut value = Default::default()
   let remaining = data.length() - start
   for index in 0..<remaining {
     value = value | (data[start + index].to_uint64() << (index * 8))
@@ -78,7 +78,7 @@ fn read_varint64_at(
 ) -> (UInt64, Int) raise ParquetError {
   let mut offset = start
   let mut shift = 0
-  let mut result = UInt64::default()
+  let mut result = Default::default()
   while shift < 64 {
     if offset >= data.length() {
       invalid_data("Unexpected end of compact stream")
@@ -93,7 +93,7 @@ fn read_varint64_at(
     shift += 7
   }
   invalid_data("Varint is too long")
-  (UInt64::default(), 0)
+  (Default::default(), 0)
 }
 
 ///|
@@ -139,7 +139,7 @@ fn append_lsb_bitpacked_ints(
   let mask = bit_mask_u64(bit_width)
   if bit_width <= 56 {
     let mut offset = start
-    let mut bit_buffer = UInt64::default()
+    let mut bit_buffer = Default::default()
     let mut bits_in_buffer = 0
     for _ in 0..<count {
       while bits_in_buffer < bit_width {
@@ -166,7 +166,7 @@ fn append_lsb_bitpacked_ints(
       let high_byte = if byte_index + 8 < data.length() {
         data[byte_index + 8].to_uint64()
       } else {
-        UInt64::default()
+        Default::default()
       }
       values.push(
         (low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))).to_int(),
@@ -216,7 +216,7 @@ fn append_lsb_bitpacked_deltas(
   let mask = bit_mask_u64(bit_width)
   if bit_width <= 56 {
     let mut offset = start
-    let mut bit_buffer = UInt64::default()
+    let mut bit_buffer = Default::default()
     let mut bits_in_buffer = 0
     for _ in 0..<count {
       while bits_in_buffer < bit_width {
@@ -244,7 +244,7 @@ fn append_lsb_bitpacked_deltas(
       let high_byte = if byte_index + 8 < data.length() {
         data[byte_index + 8].to_uint64()
       } else {
-        UInt64::default()
+        Default::default()
       }
       low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
     } else {
@@ -292,7 +292,7 @@ fn append_lsb_bitpacked_int_deltas(
   let mask = bit_mask_u64(bit_width)
   if bit_width <= 56 {
     let mut offset = start
-    let mut bit_buffer = UInt64::default()
+    let mut bit_buffer = Default::default()
     let mut bits_in_buffer = 0
     for _ in 0..<count {
       while bits_in_buffer < bit_width {
@@ -320,7 +320,7 @@ fn append_lsb_bitpacked_int_deltas(
       let high_byte = if byte_index + 8 < data.length() {
         data[byte_index + 8].to_uint64()
       } else {
-        UInt64::default()
+        Default::default()
       }
       low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
     } else {
@@ -371,7 +371,7 @@ fn append_lsb_bitpacked_int32_delta_values(
   let mask = bit_mask_u64(bit_width)
   if bit_width <= 56 {
     let mut offset = start
-    let mut bit_buffer = UInt64::default()
+    let mut bit_buffer = Default::default()
     let mut bits_in_buffer = 0
     for _ in 0..<count {
       while bits_in_buffer < bit_width {
@@ -399,7 +399,7 @@ fn append_lsb_bitpacked_int32_delta_values(
       let high_byte = if byte_index + 8 < data.length() {
         data[byte_index + 8].to_uint64()
       } else {
-        UInt64::default()
+        Default::default()
       }
       low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
     } else {
@@ -450,7 +450,7 @@ fn append_lsb_bitpacked_int64_delta_values(
   let mask = bit_mask_u64(bit_width)
   if bit_width <= 56 {
     let mut offset = start
-    let mut bit_buffer = UInt64::default()
+    let mut bit_buffer = Default::default()
     let mut bits_in_buffer = 0
     for _ in 0..<count {
       while bits_in_buffer < bit_width {
@@ -478,7 +478,7 @@ fn append_lsb_bitpacked_int64_delta_values(
       let high_byte = if byte_index + 8 < data.length() {
         data[byte_index + 8].to_uint64()
       } else {
-        UInt64::default()
+        Default::default()
       }
       low | ((high_byte & bit_mask_u64(spill_bits)) << (64 - shift))
     } else {
@@ -502,7 +502,7 @@ fn decode_rle_hybrid_range(
   count : Int,
 ) -> (Array[Int], Int) raise ParquetError {
   let mut offset = start
-  let values : Array[Int] = Array::new(capacity=count)
+  let values : Array[Int] = Array(capacity=count)
   let mut produced = 0
   if bit_width == 0 {
     for _ in 0..<count {
@@ -591,7 +591,7 @@ fn decode_delta_binary_packed(
   if values_per_miniblock <= 0 {
     invalid_data("Invalid DELTA_BINARY_PACKED miniblock size")
   }
-  let values : Array[Int64] = Array::new(capacity=total_count)
+  let values : Array[Int64] = Array(capacity=total_count)
   values.push(first_value)
   let mut previous = first_value
   let mut produced = 1
@@ -661,7 +661,7 @@ fn decode_delta_binary_packed_ints(
   if values_per_miniblock <= 0 {
     invalid_data("Invalid DELTA_BINARY_PACKED miniblock size")
   }
-  let values : Array[Int] = Array::new(capacity=total_count)
+  let values : Array[Int] = Array(capacity=total_count)
   values.push(first_value.to_int())
   let mut previous = first_value.to_int()
   let mut produced = 1
@@ -1022,7 +1022,7 @@ fn DeltaBinaryPackedCursor::next(
   }
   self.prepare_miniblock()
   let unpacked = if self.current_bit_width == 0 {
-    UInt64::default()
+    Default::default()
   } else if self.current_bit_width == 64 {
     let value = if self.current_byte_index + 8 <= self.data.length() {
       self.data.unsafe_read_uint64_le(self.current_byte_index)
@@ -1044,7 +1044,7 @@ fn DeltaBinaryPackedCursor::next(
       let high_byte = if self.current_byte_index + 8 < self.data.length() {
         self.data[self.current_byte_index + 8].to_uint64()
       } else {
-        UInt64::default()
+        Default::default()
       }
       low |
       ((high_byte & bit_mask_u64(spill_bits)) << (64 - self.current_shift))
@@ -1090,7 +1090,7 @@ fn decode_delta_binary_packed_int32_values(
   start : Int,
   count : Int,
 ) -> (Array[Value], Int) raise ParquetError {
-  let values : Array[Value] = Array::new(capacity=count)
+  let values : Array[Value] = Array(capacity=count)
   let consumed = decode_delta_binary_packed_int32_values_into(
     values, data, start, count,
   )
@@ -1177,7 +1177,7 @@ fn decode_delta_binary_packed_int64_values(
   start : Int,
   count : Int,
 ) -> (Array[Value], Int) raise ParquetError {
-  let values : Array[Value] = Array::new(capacity=count)
+  let values : Array[Value] = Array(capacity=count)
   let consumed = decode_delta_binary_packed_int64_values_into(
     values, data, start, count,
   )
@@ -1292,7 +1292,7 @@ fn DeltaLengthByteArrayCursor::next(
   if suffix_len < 0 || self.suffix_offset + suffix_len > self.data.length() {
     invalid_data("Invalid DELTA_LENGTH_BYTE_ARRAY suffix length")
   }
-  let value = self.data.view(
+  let value = self.data.exact_view(
     start=self.suffix_offset,
     end=self.suffix_offset + suffix_len,
   )
@@ -1322,7 +1322,7 @@ fn DeltaByteArrayValueCursor::new(
   {
     prefixes: DeltaBinaryPackedCursor::new(data, start),
     suffixes: DeltaLengthByteArrayCursor::new(data, suffixes_start, count),
-    previous: Bytes::default(),
+    previous: Default::default(),
   }
 }
 
@@ -1401,7 +1401,7 @@ fn decode_delta_byte_array_values(
   count : Int,
   column_type : ColumnType,
 ) -> (Array[Value], Int) raise ParquetError {
-  let values : Array[Value] = Array::new(capacity=count)
+  let values : Array[Value] = Array(capacity=count)
   let consumed = decode_delta_byte_array_values_into(
     values, data, start, count, column_type,
   )
@@ -1439,7 +1439,7 @@ fn decode_delta_byte_array_values_into(
     start + prefix_len_bytes,
     count,
   )
-  let mut previous = Bytes::default()
+  let mut previous : Bytes = Default::default()
   let mut suffix_offset = suffix_data_start
   for index in 0..<count {
     let prefix_len = prefix_lengths[index]
@@ -1453,7 +1453,7 @@ fn decode_delta_byte_array_values_into(
     let value = bytes_concat_prefix(
       previous,
       prefix_len,
-      data.view(start=suffix_offset, end=suffix_offset + suffix_len),
+      data.exact_view(start=suffix_offset, end=suffix_offset + suffix_len),
     )
     match column_type {
       String => target.push(Value::String(bytes_to_utf8_string(value[:])))
@@ -1472,7 +1472,7 @@ fn decode_plain_boolean_values(
   start : Int,
   count : Int,
 ) -> (Array[Value], Int) raise ParquetError {
-  let values : Array[Value] = Array::new(capacity=count)
+  let values : Array[Value] = Array(capacity=count)
   for index in 0..<count {
     let byte_index = start + index / 8
     let bit_index = index % 8
@@ -1636,7 +1636,7 @@ fn[T] DictionaryValueCursor::append_typed_into(
           let high_byte = if self.bitpacked_byte_index + 8 < self.data.length() {
             self.data[self.bitpacked_byte_index + 8].to_uint64()
           } else {
-            UInt64::default()
+            Default::default()
           }
           low |
           (
@@ -1678,7 +1678,7 @@ fn decode_dictionary_values(
   count : Int,
   dictionary_values : Array[Value],
 ) -> (Array[Value], Int) raise ParquetError {
-  let values : Array[Value] = Array::new(capacity=count)
+  let values : Array[Value] = Array(capacity=count)
   let consumed = decode_dictionary_values_into(
     values, data, start, count, dictionary_values,
   )
@@ -1722,7 +1722,7 @@ fn decode_plain_values(
     return decode_plain_boolean_values(data, start, count)
   }
   let mut offset = start
-  let values : Array[Value] = Array::new(capacity=count)
+  let values : Array[Value] = Array(capacity=count)
   match column.column_type {
     Boolean => ()
     Int32 =>
@@ -1756,7 +1756,9 @@ fn decode_plain_values(
         offset += 4
         values.push(
           Value::String(
-            bytes_to_utf8_string(data.view(start=offset, end=offset + len)),
+            bytes_to_utf8_string(
+              data.exact_view(start=offset, end=offset + len),
+            ),
           ),
         )
         offset += len
@@ -1772,7 +1774,9 @@ fn decode_plain_values(
           }
         }
         values.push(
-          Value::Binary(data.view(start=offset, end=offset + len).to_bytes()),
+          Value::Binary(
+            data.exact_view(start=offset, end=offset + len).to_owned(),
+          ),
         )
         offset += len
       }
@@ -1825,7 +1829,9 @@ fn decode_plain_values_into(
         offset += 4
         target.push(
           Value::String(
-            bytes_to_utf8_string(data.view(start=offset, end=offset + len)),
+            bytes_to_utf8_string(
+              data.exact_view(start=offset, end=offset + len),
+            ),
           ),
         )
         offset += len
@@ -1841,7 +1847,9 @@ fn decode_plain_values_into(
           }
         }
         target.push(
-          Value::Binary(data.view(start=offset, end=offset + len).to_bytes()),
+          Value::Binary(
+            data.exact_view(start=offset, end=offset + len).to_owned(),
+          ),
         )
         offset += len
       }

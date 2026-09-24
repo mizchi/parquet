@@ -88,7 +88,7 @@ fn table_from_parquet(file : @parquet.ParquetFile) -> PlaygroundTable {
     rows.push(out_row)
     nulls.push(out_nulls)
   }
-  { columns: file.columns().map(fn(column) { column.name() }), rows, nulls }
+  { columns: file.columns().map(fn(column) { column.name() }), rows, nulls, }
 }
 
 ///|
@@ -203,7 +203,7 @@ fn prepare_playground(
   let preview_file = @parquet.read_bytes(bytes) catch {
     err => return Err("failed to decode generated parquet: " + err.to_string())
   }
-  Ok({ parquet_bytes: bytes, preview: table_from_parquet(preview_file) })
+  Ok({ parquet_bytes: bytes, preview: table_from_parquet(preview_file), })
 }
 
 ///|

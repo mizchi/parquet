@@ -3,7 +3,7 @@ fn parse_csv(text : String) -> Array[Array[String]] {
   let chars = text.to_array()
   let rows : Array[Array[String]] = []
   let mut row : Array[String] = []
-  let field = StringBuilder::new()
+  let field = StringBuilder()
   let mut in_quotes = false
   let mut index = 0
   while index < chars.length() {
@@ -45,7 +45,7 @@ fn parse_csv(text : String) -> Array[Array[String]] {
 
 ///|
 fn normalize_fixture_header(value : String) -> String {
-  value.trim().to_string()
+  value.trim().to_owned()
 }
 
 ///|
@@ -106,7 +106,7 @@ fn read_fixture_text(name : String) -> String {
 
 ///|
 fn bytes_to_hex(bytes : Bytes) -> String {
-  let out = StringBuilder::new()
+  let out = StringBuilder()
   for byte in bytes {
     let value = byte.to_int()
     let high = value / 16
@@ -136,12 +136,8 @@ fn bytes_from_ints(values : Array[Int]) -> Bytes {
 
 ///|
 fn read_parquet_fixture(name : String) -> @parquet.ParquetFile raise {
-  @parquet.read_bytes(read_fixture(name)) catch {
-    err => {
-      println(err)
-      raise err
-    }
-  }
+  errdefer println("failed to read fixture \{name}")
+  @parquet.read_bytes(read_fixture(name))
 }
 
 ///|

@@ -77,7 +77,7 @@ just playground-build
 just playground-build-pages
 ```
 
-In the UI, you can edit schema JSON / rows JSON / SQL, generate parquet bytes with `mizchi/parquet`, and execute `read_parquet('playground.parquet')` on the `f4ah6o/duckdb` WASM backend.
+In the UI, you can edit schema JSON / rows JSON / SQL, generate parquet bytes with `mizchi/parquet`, and execute `read_parquet('playground.parquet')` on the DuckDB WASM backend (`mizchi/duckdb`, a fork of `f4ah6o/duckdb` that builds on current MoonBit).
 
 GitHub Pages:
 

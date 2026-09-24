@@ -105,14 +105,14 @@ fn decompress_page_payload(
   codec : Int,
 ) -> Bytes raise ParquetError {
   let payload = data
-    .view(start=payload_offset, end=payload_offset + compressed_len)
-    .to_bytes()
+    .exact_view(start=payload_offset, end=payload_offset + compressed_len)
+    .to_owned()
   if codec == codec_uncompressed {
     payload
   } else if codec == codec_snappy {
     decode_snappy_block(payload, expected_len)
   } else {
     unsupported("Unsupported parquet codec: \{codec}")
-    Bytes::default()
+    Default::default()
   }
 }

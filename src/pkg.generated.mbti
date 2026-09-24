@@ -1,6 +1,10 @@
 // Generated using `moon info`, DON'T EDIT IT
 package "mizchi/parquet"
 
+import {
+  "moonbitlang/core/debug",
+}
+
 // Values
 pub fn new_column(String, ColumnType, Repetition) -> Column
 
@@ -25,7 +29,12 @@ pub(all) suberror ParquetError {
   InvalidData(String)
   Unsupported(String)
   Io(String)
-} derive(Eq)
+} derive(Eq, @debug.Debug)
+pub fn ParquetError::equal(Self, Self) -> Bool
+pub fn ParquetError::not_equal(Self, Self) -> Bool
+pub fn ParquetError::output(Self, &Logger) -> Unit
+pub fn ParquetError::to_repr(Self) -> @debug.Repr
+pub fn ParquetError::to_string(Self) -> String
 pub impl Show for ParquetError
 
 // Types and methods
@@ -33,10 +42,15 @@ pub struct Column {
   name : String
   column_type : ColumnType
   repetition : Repetition
-} derive(Eq)
+} derive(Eq, @debug.Debug)
 pub fn Column::column_type(Self) -> ColumnType
+pub fn Column::equal(Self, Self) -> Bool
 pub fn Column::name(Self) -> String
+pub fn Column::not_equal(Self, Self) -> Bool
+pub fn Column::output(Self, &Logger) -> Unit
 pub fn Column::repetition(Self) -> Repetition
+pub fn Column::to_repr(Self) -> @debug.Repr
+pub fn Column::to_string(Self) -> String
 pub impl Show for Column
 
 pub(all) enum ColumnType {
@@ -48,7 +62,12 @@ pub(all) enum ColumnType {
   Double
   String
   Binary
-} derive(Eq)
+} derive(Eq, @debug.Debug)
+pub fn ColumnType::equal(Self, Self) -> Bool
+pub fn ColumnType::not_equal(Self, Self) -> Bool
+pub fn ColumnType::output(Self, &Logger) -> Unit
+pub fn ColumnType::to_repr(Self) -> @debug.Repr
+pub fn ColumnType::to_string(Self) -> String
 pub impl Show for ColumnType
 
 pub(all) enum ParquetColumnData {
@@ -66,8 +85,13 @@ pub(all) enum ParquetColumnData {
   NullableUtf8Values(Array[Bytes?])
   BinaryValues(Array[Bytes])
   NullableBinaryValues(Array[Bytes?])
-} derive(Eq)
+} derive(Eq, @debug.Debug)
+pub fn ParquetColumnData::equal(Self, Self) -> Bool
 pub fn ParquetColumnData::length(Self) -> Int
+pub fn ParquetColumnData::not_equal(Self, Self) -> Bool
+pub fn ParquetColumnData::output(Self, &Logger) -> Unit
+pub fn ParquetColumnData::to_repr(Self) -> @debug.Repr
+pub fn ParquetColumnData::to_string(Self) -> String
 pub impl Show for ParquetColumnData
 
 pub struct ParquetColumnarFile {
@@ -76,12 +100,17 @@ pub struct ParquetColumnarFile {
   row_count : Int
   mut column_values_cache : Array[Array[Value]]?
   created_by : String?
-}
+} derive(@debug.Debug)
 pub fn ParquetColumnarFile::column_data(Self) -> Array[ParquetColumnData]
 pub fn ParquetColumnarFile::column_values(Self) -> Array[Array[Value]]
 pub fn ParquetColumnarFile::columns(Self) -> Array[Column]
 pub fn ParquetColumnarFile::created_by(Self) -> String?
+pub fn ParquetColumnarFile::equal(Self, Self) -> Bool
+pub fn ParquetColumnarFile::not_equal(Self, Self) -> Bool
+pub fn ParquetColumnarFile::output(Self, &Logger) -> Unit
 pub fn ParquetColumnarFile::row_count(Self) -> Int
+pub fn ParquetColumnarFile::to_repr(Self) -> @debug.Repr
+pub fn ParquetColumnarFile::to_string(Self) -> String
 pub impl Eq for ParquetColumnarFile
 pub impl Show for ParquetColumnarFile
 
@@ -91,12 +120,17 @@ pub struct ParquetFile {
   column_data : Array[ParquetColumnData]
   mut rows_cache : Array[Array[Value]]?
   created_by : String?
-}
+} derive(@debug.Debug)
 pub fn ParquetFile::column_data(Self) -> Array[ParquetColumnData]
 pub fn ParquetFile::columns(Self) -> Array[Column]
 pub fn ParquetFile::created_by(Self) -> String?
+pub fn ParquetFile::equal(Self, Self) -> Bool
+pub fn ParquetFile::not_equal(Self, Self) -> Bool
+pub fn ParquetFile::output(Self, &Logger) -> Unit
 pub fn ParquetFile::row_count(Self) -> Int
 pub fn ParquetFile::rows(Self) -> Array[Array[Value]]
+pub fn ParquetFile::to_repr(Self) -> @debug.Repr
+pub fn ParquetFile::to_string(Self) -> String
 pub impl Eq for ParquetFile
 pub impl Show for ParquetFile
 
@@ -104,7 +138,12 @@ pub(all) enum Repetition {
   Required
   Optional
   Repeated
-} derive(Eq)
+} derive(Eq, @debug.Debug)
+pub fn Repetition::equal(Self, Self) -> Bool
+pub fn Repetition::not_equal(Self, Self) -> Bool
+pub fn Repetition::output(Self, &Logger) -> Unit
+pub fn Repetition::to_repr(Self) -> @debug.Repr
+pub fn Repetition::to_string(Self) -> String
 pub impl Show for Repetition
 
 pub(all) enum Value {
@@ -117,10 +156,14 @@ pub(all) enum Value {
   String(String)
   Binary(Bytes)
   Null
-} derive(Eq)
+} derive(Eq, @debug.Debug)
+pub fn Value::equal(Self, Self) -> Bool
+pub fn Value::not_equal(Self, Self) -> Bool
+pub fn Value::output(Self, &Logger) -> Unit
+pub fn Value::to_repr(Self) -> @debug.Repr
+pub fn Value::to_string(Self) -> String
 pub impl Show for Value
 
 // Type aliases
 
 // Traits
-

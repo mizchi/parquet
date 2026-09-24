@@ -9,7 +9,7 @@ priv struct CompactReader {
 
 ///|
 fn CompactReader::new(data : Bytes, start : Int) -> CompactReader {
-  { data, offset: start, last_field_id: 0, field_stack: [], bool_value: None }
+  { data, offset: start, last_field_id: 0, field_stack: [], bool_value: None, }
 }
 
 ///|
@@ -39,7 +39,7 @@ fn CompactReader::read_binary(
     invalid_data("Negative binary length")
   }
   self.ensure(len)
-  let view = self.data.view(start=self.offset, end=self.offset + len)
+  let view = self.data.exact_view(start=self.offset, end=self.offset + len)
   self.offset += len
   view
 }
@@ -72,7 +72,7 @@ fn CompactReader::read_varint64(
   self : CompactReader,
 ) -> UInt64 raise ParquetError {
   let mut shift = 0
-  let mut result = UInt64::default()
+  let mut result = Default::default()
   while shift < 64 {
     let byte = self.read_byte().to_int()
     let payload = (byte & 0x7f).to_uint64()
@@ -297,7 +297,7 @@ priv struct ByteSink {
 
 ///|
 fn ByteSink::new() -> ByteSink {
-  { buf: [] }
+  { buf: [], }
 }
 
 ///|
@@ -385,7 +385,7 @@ priv struct CompactWriter {
 
 ///|
 fn CompactWriter::new() -> CompactWriter {
-  { sink: ByteSink::new(), last_field_id: 0, field_stack: [] }
+  { sink: ByteSink::new(), last_field_id: 0, field_stack: [], }
 }
 
 ///|

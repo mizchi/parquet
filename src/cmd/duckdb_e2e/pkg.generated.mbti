@@ -10,4 +10,3 @@ package "mizchi/parquet/cmd/duckdb_e2e"
 // Type aliases
 
 // Traits
-
