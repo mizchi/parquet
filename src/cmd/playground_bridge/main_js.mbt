@@ -1,11 +1,11 @@
 ///|
-extern "js" fn install_bridge(
+extern "js" fn install_bridge_ffi(
   run_playground : (
-    Array[String],
-    Array[String],
-    Array[String],
-    Array[Array[String]],
-    Array[Array[Bool]],
+    FixedArray[String],
+    FixedArray[String],
+    FixedArray[String],
+    FixedArray[FixedArray[String]],
+    FixedArray[FixedArray[Bool]],
     String,
     (@playground.PlaygroundResult) -> Unit,
     (String) -> Unit,
@@ -65,6 +65,21 @@ extern "js" fn install_bridge(
   #|    },
   #|  };
   #|}
+
+fn install_bridge(
+  run_playground : (
+    Array[String],
+    Array[String],
+    Array[String],
+    Array[Array[String]],
+    Array[Array[Bool]],
+    String,
+    (@playground.PlaygroundResult) -> Unit,
+    (String) -> Unit,
+  ) -> Unit,
+) -> Unit {
+  install_bridge_ffi(fn(__a1, __a2, __a3, __a4, __a5, __a6, __a7, __a8) { run_playground(Array::from_fixed_array(__a1), Array::from_fixed_array(__a2), Array::from_fixed_array(__a3), Array::from_fixed_array(__a4.map(fn(__a9) { Array::from_fixed_array(__a9) })), Array::from_fixed_array(__a5.map(fn(__a10) { Array::from_fixed_array(__a10) })), __a6, __a7, __a8) })
+}
 
 ///|
 fn main {
